@@ -28,5 +28,6 @@
   "range_item.gs": 3,
   "range_item2.gs": 6,
   "any_type.gs": 42,
-  "any_type2.gs": "hello"
+  "any_type2.gs": "hello",
+  "import.gs": "YES"
 }

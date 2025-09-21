@@ -3,7 +3,7 @@ package test
 import (
 	"testing"
 
-	"github.com/lengzhao/goscript"
+	goscript "github.com/lengzhao/goscript"
 )
 
 func TestCompilerBasic(t *testing.T) {

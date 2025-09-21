@@ -3,13 +3,13 @@ package test
 import (
 	"testing"
 
-	"github.com/lengzhao/goscript"
+	goscript "github.com/lengzhao/goscript"
 )
 
 func TestCallFunction(t *testing.T) {
 	// Test basic arithmetic
 	script := goscript.NewScript([]byte(`
-	package main
+	package test
 
 	func add(a, b int) int {
 		return a + b

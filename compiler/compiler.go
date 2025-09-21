@@ -49,6 +49,9 @@ type Compiler struct {
 	// Expression type mapping to track expression types during compilation
 	// This is used for method chaining to determine the type of the receiver
 	expressionTypes map[ast.Expr]string
+
+	// Import declarations to handle
+	imports []string
 }
 
 // NewCompiler creates a new compiler
@@ -61,26 +64,31 @@ func NewCompiler(vm *vm.VM, context *context.ExecutionContext) *Compiler {
 		functionMap:     make(map[string]*FunctionInfo),
 		variableTypes:   make(map[string]string),
 		expressionTypes: make(map[ast.Expr]string),
+		imports:         make([]string, 0),
 	}
 }
 
 // Compile compiles an AST file to bytecode
 func (c *Compiler) Compile(file *ast.File) error {
-	// Collect all function declarations and type declarations
+	// Collect all function declarations, type declarations, and import declarations
 	var typeDecls []*ast.GenDecl
+	var importDecls []*ast.GenDecl
 	var mainFunc *ast.FuncDecl
+	var otherFuncs []*ast.FuncDecl
+	var methodFuncs []*ast.FuncDecl
 	for _, decl := range file.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
 			if d.Recv != nil {
 				// This is a method declaration
-				c.functions = append(c.functions, d)
+				methodFuncs = append(methodFuncs, d)
 				fmt.Printf("Found method: %s with receiver\n", d.Name.Name)
 			} else if d.Name.Name == "main" {
 				mainFunc = d
 				fmt.Printf("Found main function\n")
 			} else {
-				c.functions = append(c.functions, d)
+				// Regular function declaration
+				otherFuncs = append(otherFuncs, d)
 				fmt.Printf("Found function: %s\n", d.Name.Name)
 			}
 		case *ast.GenDecl:
@@ -88,11 +96,23 @@ func (c *Compiler) Compile(file *ast.File) error {
 			if d.Tok == token.TYPE {
 				typeDecls = append(typeDecls, d)
 				fmt.Printf("Found type declaration\n")
+			} else if d.Tok == token.IMPORT {
+				// Handle import declarations
+				importDecls = append(importDecls, d)
+				fmt.Printf("Found import declaration\n")
 			}
 		}
 	}
 
-	// Process type declarations first
+	// Process import declarations first
+	for _, decl := range importDecls {
+		err := c.compileImportDecl(decl)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Process type declarations
 	for _, decl := range typeDecls {
 		err := c.compileTypeDecl(decl)
 		if err != nil {
@@ -100,87 +120,34 @@ func (c *Compiler) Compile(file *ast.File) error {
 		}
 	}
 
-	// Create function info for all functions first
-	for _, fn := range c.functions {
-		var funcName string
-		var receiverType string // "value" or "pointer"
-		if fn.Recv != nil {
-			// This is a method declaration
-			// Get receiver type name to create a unique method name
-			var receiverTypeName string
-			if len(fn.Recv.List) > 0 {
-				receiver := fn.Recv.List[0]
-				// Extract type name from receiver
-				switch t := receiver.Type.(type) {
-				case *ast.Ident:
-					receiverTypeName = t.Name
-					receiverType = "value"
-				case *ast.StarExpr:
-					if ident, ok := t.X.(*ast.Ident); ok {
-						receiverTypeName = ident.Name
-					}
-					receiverType = "pointer"
-				}
-
-				// Create unique method name
-				funcName = receiverTypeName + "." + fn.Name.Name
-				fmt.Printf("Creating method info: %s (receiver type: %s)\n", funcName, receiverType)
-			} else {
-				funcName = fn.Name.Name
-			}
-		} else {
-			// This is a regular function
-			funcName = fn.Name.Name
+	// Process method declarations (create function info first)
+	for _, fn := range methodFuncs {
+		// For methods, we need to create function info first
+		err := c.createFunctionInfo(fn)
+		if err != nil {
+			return err
 		}
-
-		// Create function info
-		funcInfo := &FunctionInfo{
-			Name:         funcName,
-			ParamNames:   make([]string, 0),
-			ReceiverType: receiverType,
-		}
-
-		// Count parameters and collect parameter names
-		// For methods, we need to add the receiver as the first parameter
-		if fn.Recv != nil && len(fn.Recv.List) > 0 {
-			// Add receiver as first parameter
-			receiver := fn.Recv.List[0]
-			if len(receiver.Names) > 0 {
-				funcInfo.ParamCount++
-				funcInfo.ParamNames = append(funcInfo.ParamNames, receiver.Names[0].Name)
-			} else {
-				// Anonymous receiver, use a default name
-				funcInfo.ParamCount++
-				funcInfo.ParamNames = append(funcInfo.ParamNames, "_receiver")
-			}
-		}
-
-		if fn.Type.Params != nil {
-			// Count all parameter names (handling multiple names per field)
-			for _, param := range fn.Type.Params.List {
-				for _, name := range param.Names {
-					funcInfo.ParamCount++
-					funcInfo.ParamNames = append(funcInfo.ParamNames, name.Name)
-				}
-			}
-		}
-
-		// Create ScriptFunction that will be registered at runtime
-		funcInfo.ScriptFunction = &vm.ScriptFunction{
-			Name:         funcName, // Use the unique function name
-			ParamCount:   funcInfo.ParamCount,
-			ParamNames:   funcInfo.ParamNames,
-			ReceiverType: receiverType,
-		}
-
-		// Store function info with the unique function name
-		c.functionMap[funcName] = funcInfo
-		fmt.Printf("Stored function info: %s\n", funcName)
 	}
 
-	// Compile function definitions first (except main)
-	// Generate OpRegistFunction instructions for each function
-	for _, fn := range c.functions {
+	// Process other function declarations (create function info first)
+	for _, fn := range otherFuncs {
+		// For regular functions, we need to create function info first
+		err := c.createFunctionInfo(fn)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Process method declarations (register them)
+	for _, fn := range methodFuncs {
+		err := c.compileFunctionRegistration(fn)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Process other function declarations (register them)
+	for _, fn := range otherFuncs {
 		err := c.compileFunctionRegistration(fn)
 		if err != nil {
 			return err
@@ -195,11 +162,60 @@ func (c *Compiler) Compile(file *ast.File) error {
 		}
 	}
 
-	// Now compile function bodies
-	for _, fn := range c.functions {
+	// Now compile method bodies
+	for _, fn := range methodFuncs {
 		err := c.compileFunctionBody(fn)
 		if err != nil {
 			return err
+		}
+	}
+
+	// Compile other function bodies
+	for _, fn := range otherFuncs {
+		err := c.compileFunctionBody(fn)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// compileImportDecl compiles an import declaration
+func (c *Compiler) compileImportDecl(decl *ast.GenDecl) error {
+	// Process each specification in the declaration
+	for _, spec := range decl.Specs {
+		if importSpec, ok := spec.(*ast.ImportSpec); ok {
+			// Get the import path (remove quotes)
+			importPath := importSpec.Path.Value
+			if len(importPath) >= 2 && importPath[0] == '"' && importPath[len(importPath)-1] == '"' {
+				importPath = importPath[1 : len(importPath)-1]
+			}
+
+			// Add to imports list
+			c.imports = append(c.imports, importPath)
+
+			// Get the import name (either alias or package name)
+			var importName string
+			if importSpec.Name != nil {
+				// Use alias
+				importName = importSpec.Name.Name
+			} else {
+				// Use package name (last part of path)
+				parts := strings.Split(importPath, "/")
+				importName = parts[len(parts)-1]
+			}
+
+			// For import statements in scripts, we need to make the module available
+			// We'll emit the new OpImport instruction to handle module imports
+			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, importPath, nil))
+			c.emitInstruction(vm.NewInstruction(vm.OpImport, nil, nil))
+
+			// Also store the module name as a variable so it can be referenced
+			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, importName, nil))
+			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, importName, nil))
+
+			fmt.Printf("Compiled import: %s as %s\n", importPath, importName)
 		}
 	}
 
@@ -1477,7 +1493,39 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 		// Get the method name
 		methodName := selExpr.Sel.Name
 
-		// Determine the type of the receiver
+		// Check if this is a module function call (e.g., strings.HasPrefix)
+		// In this case, selExpr.X would be an identifier like "strings"
+		if ident, ok := selExpr.X.(*ast.Ident); ok {
+			// Check if this identifier is in our imports list
+			for _, importPath := range c.imports {
+				// Get the module name from the import path
+				parts := strings.Split(importPath, "/")
+				moduleName := parts[len(parts)-1]
+
+				// If the identifier matches the module name, this is a module function call
+				if ident.Name == moduleName {
+					// Create the full function name (e.g., "strings.HasPrefix")
+					fullFunctionName := moduleName + "." + methodName
+
+					// Compile all arguments
+					argCount := len(expr.Args)
+					for _, arg := range expr.Args {
+						err := c.compileExpr(arg)
+						if err != nil {
+							return err
+						}
+					}
+
+					// Emit a regular function call instruction for module functions
+					// Module functions are registered in the VM's function registry
+					c.emitInstruction(vm.NewInstruction(vm.OpCall, fullFunctionName, argCount))
+
+					return nil
+				}
+			}
+		}
+
+		// Determine the type of the receiver for struct method calls
 		var typeName string
 		var varName string
 		if ident, ok := selExpr.X.(*ast.Ident); ok {
@@ -1797,4 +1845,89 @@ func (c *Compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
 func (c *Compiler) emitInstruction(instr *vm.Instruction) {
 	c.vm.AddInstruction(instr)
 	c.ip++
+}
+
+// GetImports returns the list of imported modules
+func (c *Compiler) GetImports() []string {
+	return c.imports
+}
+
+// createFunctionInfo creates function info for a function declaration
+func (c *Compiler) createFunctionInfo(fn *ast.FuncDecl) error {
+	// Get function name
+	funcName := fn.Name.Name
+
+	// Check if this is a method (has receiver)
+	var receiverTypeName string
+	var receiverType string // "value" or "pointer"
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		// This is a method
+		// Get receiver type name to create a unique method name
+		if len(fn.Recv.List) > 0 {
+			receiver := fn.Recv.List[0]
+			// Extract type name from receiver
+			switch t := receiver.Type.(type) {
+			case *ast.Ident:
+				receiverTypeName = t.Name
+				receiverType = "value"
+			case *ast.StarExpr:
+				if ident, ok := t.X.(*ast.Ident); ok {
+					receiverTypeName = ident.Name
+				}
+				receiverType = "pointer"
+			}
+		}
+
+		// Create unique method name
+		if receiverTypeName != "" {
+			funcName = receiverTypeName + "." + fn.Name.Name
+		}
+
+		fmt.Printf("Creating method info for: %s (unique name: %s, receiver type: %s)\n", fn.Name.Name, funcName, receiverType)
+	} else {
+		fmt.Printf("Creating function info for: %s\n", funcName)
+	}
+
+	// Create function info
+	funcInfo := &FunctionInfo{
+		Name:         funcName,
+		ParamNames:   make([]string, 0),
+		ReceiverType: receiverType,
+	}
+
+	// Handle receiver parameter for methods
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		receiver := fn.Recv.List[0]
+		if len(receiver.Names) > 0 {
+			// Add receiver name to parameter names
+			funcInfo.ParamNames = append(funcInfo.ParamNames, receiver.Names[0].Name)
+			funcInfo.ParamCount++
+		}
+	}
+
+	// Count parameters and collect parameter names
+	if fn.Type.Params != nil {
+		// Count all parameter names (handling multiple names per field)
+		for _, param := range fn.Type.Params.List {
+			for _, name := range param.Names {
+				funcInfo.ParamCount++
+				funcInfo.ParamNames = append(funcInfo.ParamNames, name.Name)
+			}
+		}
+	}
+
+	// Create ScriptFunction that will be registered at runtime
+	funcInfo.ScriptFunction = &vm.ScriptFunction{
+		Name:         funcName,
+		ParamCount:   funcInfo.ParamCount,
+		ParamNames:   funcInfo.ParamNames,
+		ReceiverType: receiverType,
+	}
+
+	fmt.Printf("Created function info: %s with %d params, receiver type: %s\n", funcName, funcInfo.ParamCount, receiverType)
+
+	// Store function info
+	c.functionMap[funcName] = funcInfo
+
+	return nil
 }

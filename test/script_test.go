@@ -53,12 +53,13 @@ func testScriptFile(t *testing.T, filePath string) {
 	securityCtx := &execContext.SecurityContext{
 		MaxExecutionTime:  5 * time.Second,
 		MaxMemoryUsage:    10 * 1024 * 1024, // 10MB
-		AllowedModules:    []string{"fmt", "math"},
+		AllowedModules:    []string{"fmt", "math", "strings", "json"},
 		ForbiddenKeywords: []string{"unsafe"},
 		AllowCrossModule:  true,
 		MaxInstructions:   10000, // 设置较小的指令数限制用于简单脚本
 	}
 	script.SetSecurityContext(securityCtx)
+	// script.ImportModule(builtin.ListAllModules()...)
 
 	ctx := context.Background()
 	ctx1, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -106,7 +107,7 @@ func validateScriptResult(t *testing.T, filePath string, result interface{}) {
 func TestScriptWithCustomFunction(t *testing.T) {
 	// Simple script that uses a custom function
 	source := []byte(`
-package main
+package test
 
 func main() {
     result := power(2, 3)
@@ -153,7 +154,7 @@ func main() {
 func TestScriptWithVariables(t *testing.T) {
 	// Simple script that uses variables
 	source := []byte(`
-package main
+package test
 
 func main() {
     x := 10

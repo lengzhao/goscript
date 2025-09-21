@@ -4,7 +4,7 @@ GoScript是一个兼容Go标准语法的脚本引擎，它允许你在Go应用�
 
 ## 架构设计
 
-GoScript的完整技术文档请参见 [综合技术文档](docs/architecture.md)。
+GoScript的完整技术文档请参见 [综合技术文档](docs/GoScript_Comprehensive_Documentation.md)。
 
 ## 特性
 
@@ -121,6 +121,39 @@ func main() {
     
     fmt.Printf("执行结果: %v\n", result) // 输出: 30
 }
+```
+
+### 使用内置模块
+
+GoScript提供了几个内置模块，包括`math`、`strings`和`json`：
+
+```
+func main() {
+    // 使用strings模块
+    lowerStr := strings.toLower("HELLO WORLD")
+    hasWorld := strings.contains("hello world", "world")
+    
+    // 使用json模块
+    data := map[string]interface{}{"name": "John", "age": 30}
+    jsonStr := json.marshal(data)
+    parsedData := json.unmarshal(jsonStr)
+    
+    return map[string]interface{}{
+        "lower": lowerStr,
+        "contains": hasWorld,
+        "json": jsonStr,
+        "parsed": parsedData,
+    }
+}
+```
+
+要使用这些模块，需要在安全上下文中允许它们：
+
+```
+securityCtx := &goscript.SecurityContext{
+    AllowedModules: []string{"strings", "json"},
+}
+script.SetSecurityContext(securityCtx)
 ```
 
 ## 核心组件

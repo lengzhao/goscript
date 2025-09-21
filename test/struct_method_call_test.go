@@ -25,7 +25,7 @@ func TestStructMethodCall(t *testing.T) {
 	// Parse the test script
 	parser := parser.New()
 	script := `
-package main
+package test
 
 type Rectangle struct {
 	width  int

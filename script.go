@@ -4,6 +4,7 @@ package goscript
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lengzhao/goscript/builtin"
@@ -60,9 +61,6 @@ func NewScript(source []byte) *Script {
 		debug:          false,
 		executionStats: &ExecutionStats{},
 	}
-
-	// Set up default modules
-	script.setupDefaultModules()
 
 	// Register builtin functions with the VM
 	for name, fn := range builtin.BuiltInFunctions {
@@ -231,12 +229,61 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 		}(fn))
 	}
 
-	// Register module functions with the VM
-	if currentModule, exists := s.moduleManager.GetCurrentModule(); exists {
-		functions := currentModule.GetAllFunctions()
+	// Generate bytecode based on source content
+	// This is a simplified compilation process for demonstration purposes
+	sourceStr := string(s.source)
+
+	// Create a parser
+	parser := parser.New()
+
+	// Parse the source code into an AST
+	astFile, err := parser.Parse("script.go", []byte(sourceStr), 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse source code: %w", err)
+	}
+
+	// Create a compiler instance
+	compiler := compiler.NewCompiler(s.vm, s.globalContext)
+
+	// Compile the AST to bytecode
+	err = compiler.Compile(astFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compile AST: %w", err)
+	}
+
+	// After compiling, we know which modules are needed
+	// Import all needed modules
+	neededModules := compiler.GetImports()
+	fmt.Printf("Needed modules: %v\n", neededModules)
+
+	// Import all needed modules
+	for _, modulePath := range neededModules {
+		// Extract module name from path
+		parts := strings.Split(modulePath, "/")
+		moduleName := parts[len(parts)-1]
+
+		// Import the module
+		err := s.moduleManager.ImportModule(moduleName)
+		if err != nil {
+			// If the module doesn't exist, continue to the next one
+			fmt.Printf("Failed to import module %s: %v\n", moduleName, err)
+			continue
+		}
+		fmt.Printf("Successfully imported module %s\n", moduleName)
+	}
+
+	// Register all module functions with the VM
+	allModules := s.moduleManager.GetAllModules()
+	fmt.Printf("Registering functions from %d modules\n", len(allModules))
+	for _, module := range allModules {
+		functions := module.GetAllFunctions()
+		fmt.Printf("Module %s has %d functions\n", module.Name, len(functions))
 		for name, fn := range functions {
 			// Register each function with the VM
-			s.vm.RegisterFunction(name, fn)
+			// For module functions, we register them with their full name (e.g., "strings.Contains")
+			fullName := module.Name + "." + name
+			fmt.Printf("Registering function: %s\n", fullName)
+			s.vm.RegisterFunction(fullName, fn)
 		}
 	}
 
@@ -249,14 +296,6 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 			// Register each function with the VM
 			s.vm.RegisterFunction(name, fn)
 		}
-	}
-
-	// Generate bytecode based on source content
-	// This is a simplified compilation process for demonstration purposes
-	sourceStr := string(s.source)
-	err := s.compileSource(sourceStr)
-	if err != nil {
-		return nil, err
 	}
 
 	// Execute the VM
@@ -301,19 +340,30 @@ func (s *Script) compileSource(sourceStr string) error {
 }
 
 // ImportModule imports a module into the script
-func (s *Script) ImportModule(moduleName string) error {
-	return s.moduleManager.ImportModule(moduleName, s.globalContext)
+func (s *Script) ImportModule(moduleNames ...string) error {
+	for _, moduleName := range moduleNames {
+		err := s.moduleManager.ImportModule(moduleName)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetGlobalContext returns the global execution context
+func (s *Script) GetGlobalContext() *execContext.ExecutionContext {
+	return s.globalContext
+}
+
+// GetModuleManager returns the module manager
+func (s *Script) GetModuleManager() *module.ModuleManager {
+	return s.moduleManager
 }
 
 // String returns a string representation of the script
 func (s *Script) String() string {
 	return fmt.Sprintf("Script{source: %d bytes, modules: %d}",
 		len(s.source), len(s.moduleManager.GetAllModules()))
-}
-
-// GetGlobalContext returns the global execution context
-func (s *Script) GetGlobalContext() *execContext.ExecutionContext {
-	return s.globalContext
 }
 
 // SetDebug enables or disables debug mode
@@ -335,32 +385,7 @@ func (s *Script) GetVM() *vm.VM {
 	return s.vm
 }
 
-// GetModuleManager returns the module manager
-func (s *Script) GetModuleManager() *module.ModuleManager {
-	return s.moduleManager
-}
-
 // GetRuntime returns the runtime
 func (s *Script) GetRuntime() *runtime.Runtime {
 	return s.runtime
-}
-
-// setupDefaultModules sets up default modules
-func (s *Script) setupDefaultModules() {
-	// Create and register math module
-	mathModule := module.NewModule("math")
-	mathModule.AddFunction("abs", func(args ...interface{}) (interface{}, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("abs function requires 1 argument")
-		}
-		if val, ok := args[0].(int); ok {
-			if val < 0 {
-				return -val, nil
-			}
-			return val, nil
-		}
-		return nil, fmt.Errorf("abs function requires integer argument")
-	})
-
-	s.moduleManager.RegisterModule(mathModule)
 }

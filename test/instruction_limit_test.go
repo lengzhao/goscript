@@ -5,14 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lengzhao/goscript"
+	goscript "github.com/lengzhao/goscript"
 	execContext "github.com/lengzhao/goscript/context"
 )
 
 func TestInstructionLimit(t *testing.T) {
 	// 测试无限循环脚本是否会因为指令数限制而被终止
 	scriptSource := `
-package main
+package test
 
 func main() {
 	i := 0
@@ -61,7 +61,7 @@ func main() {
 func TestInstructionLimitInFunction(t *testing.T) {
 	// 测试在函数中执行无限循环是否会因为指令数限制而被终止
 	scriptSource := `
-package main
+package test
 
 func infiniteLoop() {
 	i := 0
@@ -115,7 +115,7 @@ func main() {
 func TestNormalExecutionWithinLimit(t *testing.T) {
 	// 测试正常脚本在指令数限制内能够正常执行
 	scriptSource := `
-package main
+package test
 
 func main() {
 	return 42

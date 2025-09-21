@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/lengzhao/goscript/types"
 )
@@ -82,6 +83,9 @@ const (
 
 	// Get an element from a slice or array by index
 	OpGetElement
+
+	// Import a module
+	OpImport
 )
 
 // String returns the string representation of an OpCode
@@ -133,6 +137,8 @@ func (op OpCode) String() string {
 		return "OpLen"
 	case OpGetElement:
 		return "OpGetElement"
+	case OpImport:
+		return "OpImport"
 	default:
 		return fmt.Sprintf("OpCode(%d)", op)
 	}
@@ -235,6 +241,8 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("LEN %v", i.Arg)
 	case OpGetElement:
 		return fmt.Sprintf("GET_ELEMENT %v", i.Arg)
+	case OpImport:
+		return fmt.Sprintf("IMPORT %v", i.Arg)
 	default:
 		return fmt.Sprintf("UNKNOWN(%d) %v %v", i.Op, i.Arg, i.Arg2)
 	}
@@ -525,6 +533,8 @@ func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
 				args[i] = vm.Pop()
 			}
 
+			// Check if it's a module function call (format: moduleName.functionName)
+			// Module functions should already be registered in the function registry
 			// For script-defined functions, check if the receiver parameter needs to be handled specially
 			if scriptFunc, exists := vm.scriptFunctions[fnName]; exists {
 				// Handle receiver parameter based on receiver type
@@ -928,6 +938,33 @@ func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
 				}
 			} else {
 				vm.Push(nil)
+			}
+		case OpImport:
+			// Handle import instruction
+			// Pop the module name from the stack
+			if len(vm.stack) < 1 {
+				return nil, fmt.Errorf("stack underflow in IMPORT: expected 1 value, got %d", len(vm.stack))
+			}
+			modulePath := vm.Pop()
+
+			// Convert module path to string
+			var modulePathStr string
+			if s, ok := modulePath.(string); ok {
+				modulePathStr = s
+			} else {
+				modulePathStr = fmt.Sprintf("%v", modulePath)
+			}
+
+			// Extract module name from path (last part)
+			parts := strings.Split(modulePathStr, "/")
+			moduleName := parts[len(parts)-1]
+
+			// Store the module name as a global variable so it can be referenced
+			vm.SetGlobal(moduleName, moduleName)
+
+			// Debug output
+			if vm.debug {
+				fmt.Printf("IMPORT: Imported module %s\n", moduleName)
 			}
 		}
 

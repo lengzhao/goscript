@@ -4,6 +4,7 @@ package module
 import (
 	"fmt"
 
+	"github.com/lengzhao/goscript/builtin"
 	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/symbol"
 	"github.com/lengzhao/goscript/types"
@@ -183,12 +184,40 @@ type ModuleManager struct {
 
 // NewModuleManager creates a new module manager
 func NewModuleManager() *ModuleManager {
-	return &ModuleManager{
+	mm := &ModuleManager{
 		modules:       make(map[string]*Module),
 		currentModule: "main",
 		globalContext: context.NewExecutionContext(),
 		debug:         false,
 	}
+
+	// Register default modules
+	mm.registerDefaultModules()
+
+	return mm
+}
+
+// registerDefaultModules registers default builtin modules
+func (mm *ModuleManager) registerDefaultModules() {
+	// Register math module
+	mathModule := NewModule("math")
+
+	// Add math functions
+	// For now, we'll add a simple abs function
+	mathModule.AddFunction("abs", func(args ...interface{}) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("abs function requires 1 argument")
+		}
+		if num, ok := args[0].(int); ok {
+			if num < 0 {
+				return -num, nil
+			}
+			return num, nil
+		}
+		return nil, fmt.Errorf("abs function requires integer argument")
+	})
+
+	mm.RegisterModule(mathModule)
 }
 
 // RegisterModule registers a module
@@ -276,10 +305,31 @@ func (mm *ModuleManager) CallModuleFunction(moduleName, functionName string, arg
 }
 
 // ImportModule imports a module into the current context
-func (mm *ModuleManager) ImportModule(moduleName string, ctx *context.ExecutionContext) error {
+func (mm *ModuleManager) ImportModule(moduleName string) error {
 	module, exists := mm.modules[moduleName]
 	if !exists {
-		return fmt.Errorf("module %s not found", moduleName)
+		// Check if it's a builtin module
+		moduleFuncs, isBuiltin := builtin.GetModuleFunctions(moduleName)
+		if !isBuiltin {
+			return fmt.Errorf("module %s not found", moduleName)
+		}
+
+		// Create a new module for the builtin functions
+		module = NewModule(moduleName)
+
+		// Add all functions from the builtin module
+		for funcName, fn := range moduleFuncs {
+			err := module.AddFunction(funcName, fn)
+			if err != nil {
+				return fmt.Errorf("failed to add function %s to module %s: %w", funcName, moduleName, err)
+			}
+		}
+
+		// Register the module
+		err := mm.RegisterModule(module)
+		if err != nil {
+			return fmt.Errorf("failed to register module %s: %w", moduleName, err)
+		}
 	}
 
 	// Import all symbols from the module into the context

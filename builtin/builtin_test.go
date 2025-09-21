@@ -148,3 +148,127 @@ func TestInt(t *testing.T) {
 		t.Error("Expected error for unsupported type")
 	}
 }
+
+func TestStringsModule(t *testing.T) {
+	// Test contains function
+	containsFunc, exists := StringsModule["Contains"]
+	if !exists {
+		t.Fatal("contains function should exist in strings module")
+	}
+
+	result1, err := containsFunc("hello world", "world")
+	if err != nil {
+		t.Fatalf("Failed to call contains function: %v", err)
+	}
+	if result1 != true {
+		t.Errorf("Expected contains('hello world', 'world') to be true, got %v", result1)
+	}
+
+	result2, err := containsFunc("hello world", "test")
+	if err != nil {
+		t.Fatalf("Failed to call contains function: %v", err)
+	}
+	if result2 != false {
+		t.Errorf("Expected contains('hello world', 'test') to be false, got %v", result2)
+	}
+
+	// Test toLower function
+	toLowerFunc, exists := StringsModule["ToLower"]
+	if !exists {
+		t.Fatal("toLower function should exist in strings module")
+	}
+
+	result3, err := toLowerFunc("HELLO WORLD")
+	if err != nil {
+		t.Fatalf("Failed to call toLower function: %v", err)
+	}
+	if result3 != "hello world" {
+		t.Errorf("Expected toLower('HELLO WORLD') to be 'hello world', got %v", result3)
+	}
+
+	// Test split function
+	splitFunc, exists := StringsModule["Split"]
+	if !exists {
+		t.Fatal("split function should exist in strings module")
+	}
+
+	result4, err := splitFunc("a,b,c", ",")
+	if err != nil {
+		t.Fatalf("Failed to call split function: %v", err)
+	}
+	if slice, ok := result4.([]interface{}); ok {
+		if len(slice) != 3 || slice[0] != "a" || slice[1] != "b" || slice[2] != "c" {
+			t.Errorf("Expected split('a,b,c', ',') to be ['a', 'b', 'c'], got %v", slice)
+		}
+	} else {
+		t.Errorf("Expected split to return []interface{}, got %T", result4)
+	}
+}
+
+func TestJSONModule(t *testing.T) {
+	// Test marshal function
+	marshalFunc, exists := JSONModule["Marshal"]
+	if !exists {
+		t.Fatal("marshal function should exist in json module")
+	}
+
+	// Test with a map
+	testMap := map[string]interface{}{
+		"name": "John",
+		"age":  30,
+	}
+	result1, err := marshalFunc(testMap)
+	if err != nil {
+		t.Fatalf("Failed to call marshal function: %v", err)
+	}
+	if result1 != `{"age":30,"name":"John"}` && result1 != `{"name":"John","age":30}` {
+		t.Errorf("Expected marshal to return JSON string, got %v", result1)
+	}
+
+	// Test unmarshal function
+	unmarshalFunc, exists := JSONModule["Unmarshal"]
+	if !exists {
+		t.Fatal("unmarshal function should exist in json module")
+	}
+
+	jsonStr := `{"name":"John","age":30}`
+	result2, err := unmarshalFunc(jsonStr)
+	if err != nil {
+		t.Fatalf("Failed to call unmarshal function: %v", err)
+	}
+
+	// Check if result is a map with the expected values
+	if resultMap, ok := result2.(map[string]interface{}); ok {
+		if resultMap["name"] != "John" || resultMap["age"] != float64(30) {
+			t.Errorf("Expected unmarshal to return map with correct values, got %v", resultMap)
+		}
+	} else {
+		t.Errorf("Expected unmarshal to return map[string]interface{}, got %T", result2)
+	}
+}
+
+func TestGetModuleFunctions(t *testing.T) {
+	// Test getting strings module functions
+	stringsFuncs, exists := GetModuleFunctions("strings")
+	if !exists {
+		t.Error("strings module should exist")
+	}
+	if len(stringsFuncs) == 0 {
+		t.Error("strings module should have functions")
+	}
+
+	// Test getting json module functions
+	jsonFuncs, exists := GetModuleFunctions("json")
+	if !exists {
+		t.Error("json module should exist")
+	}
+	if len(jsonFuncs) == 0 {
+		t.Error("json module should have functions")
+	}
+
+	// Test getting non-existent module
+	_, exists = GetModuleFunctions("nonexistent")
+	if exists {
+		t.Error("nonexistent module should not exist")
+	}
+}

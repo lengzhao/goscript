@@ -46,7 +46,7 @@ func TestDebugMode(t *testing.T) {
 func TestExecutionStats(t *testing.T) {
 	// Create script with a simple valid Go program
 	script := goscript.NewScript([]byte(`
-package main
+package test
 
 func main() {
 	return 42
@@ -178,7 +178,7 @@ func TestComplexScriptExecution(t *testing.T) {
 	// Since our current implementation is simplified, we'll test with a script that
 	// produces the default result (30)
 	source := []byte(`
-package main
+package test
 
 func main() {
     x := 10
