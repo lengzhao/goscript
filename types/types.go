@@ -146,7 +146,7 @@ func GetTypeByName(name string) (IType, error) {
 		return StringType.Clone(), nil
 	case "bool":
 		return BoolType.Clone(), nil
-	case "interface{}":
+	case "interface{}", "any":
 		return NewInterfaceType(""), nil
 	default:
 		// For unknown types, return an interface type as default

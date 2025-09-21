@@ -26,5 +26,7 @@
   "range_advanced.gs": 9,
   "range_simple.gs": 3,
   "range_item.gs": 3,
-  "range_item2.gs": 6
+  "range_item2.gs": 6,
+  "any_type.gs": 42,
+  "any_type2.gs": "hello"
 }

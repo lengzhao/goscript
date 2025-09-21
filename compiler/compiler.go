@@ -601,9 +601,47 @@ func (c *Compiler) compileStmt(stmt ast.Stmt) error {
 		return c.compileRangeStmt(s)
 	case *ast.IncDecStmt:
 		return c.compileIncDecStmt(s)
+	case *ast.DeclStmt:
+		return c.compileDeclStmt(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
+}
+
+// compileDeclStmt compiles a declaration statement
+func (c *Compiler) compileDeclStmt(stmt *ast.DeclStmt) error {
+	// For now, we only support simple variable declarations
+	// In a full implementation, this would handle all kinds of declarations
+	genDecl, ok := stmt.Decl.(*ast.GenDecl)
+	if !ok {
+		return fmt.Errorf("unsupported declaration type: %T", stmt.Decl)
+	}
+
+	// Process each specification in the declaration
+	for _, spec := range genDecl.Specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			return fmt.Errorf("unsupported value spec type: %T", spec)
+		}
+
+		// For each variable name in the spec
+		for i, name := range valueSpec.Names {
+			// If there's an initial value, compile and assign it
+			if i < len(valueSpec.Values) {
+				err := c.compileExpr(valueSpec.Values[i])
+				if err != nil {
+					return err
+				}
+				c.emitInstruction(vm.NewInstruction(vm.OpStoreName, name.Name, nil))
+			} else {
+				// Initialize with zero value
+				c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
+				c.emitInstruction(vm.NewInstruction(vm.OpStoreName, name.Name, nil))
+			}
+		}
+	}
+
+	return nil
 }
 
 // compileRangeStmt compiles a range statement
