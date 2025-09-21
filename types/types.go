@@ -6,6 +6,13 @@ import (
 	"reflect"
 )
 
+// Method represents a method signature
+type Method struct {
+	Name    string
+	Params  []IType
+	Returns []IType
+}
+
 // IType is the interface that all types in GoScript must implement
 type IType interface {
 	// TypeName returns the name of the type
@@ -28,6 +35,15 @@ type IType interface {
 
 	// Kind returns the reflect.Kind of the type
 	Kind() reflect.Kind
+
+	// GetMethods returns all methods available on this type
+	GetMethods() []Method
+
+	// HasMethod checks if the type has a method with the given name
+	HasMethod(name string) bool
+
+	// GetMethod returns a method by name
+	GetMethod(name string) (Method, bool)
 }
 
 // BaseType represents a basic type
@@ -97,6 +113,24 @@ func (bt *BaseType) DefaultValue() interface{} {
 // Kind returns the reflect.Kind of the type
 func (bt *BaseType) Kind() reflect.Kind {
 	return bt.kind
+}
+
+// GetMethods returns all methods available on this type
+func (bt *BaseType) GetMethods() []Method {
+	// Basic types don't have methods
+	return []Method{}
+}
+
+// HasMethod checks if the type has a method with the given name
+func (bt *BaseType) HasMethod(name string) bool {
+	// Basic types don't have methods
+	return false
+}
+
+// GetMethod returns a method by name
+func (bt *BaseType) GetMethod(name string) (Method, bool) {
+	// Basic types don't have methods
+	return Method{}, false
 }
 
 // IntType represents the int type
@@ -170,4 +204,40 @@ func IsComparable(t1, t2 IType) bool {
 	}
 
 	return false
+}
+
+// IsStructType checks if a type is a struct type
+func IsStructType(t IType) bool {
+	if t == nil {
+		return false
+	}
+	_, ok := t.(*StructType)
+	return ok
+}
+
+// IsInterfaceType checks if a type is an interface type
+func IsInterfaceType(t IType) bool {
+	if t == nil {
+		return false
+	}
+	_, ok := t.(*InterfaceType)
+	return ok
+}
+
+// AsStructType converts an IType to a StructType if possible
+func AsStructType(t IType) (*StructType, bool) {
+	if t == nil {
+		return nil, false
+	}
+	structType, ok := t.(*StructType)
+	return structType, ok
+}
+
+// AsInterfaceType converts an IType to an InterfaceType if possible
+func AsInterfaceType(t IType) (*InterfaceType, bool) {
+	if t == nil {
+		return nil, false
+	}
+	interfaceType, ok := t.(*InterfaceType)
+	return interfaceType, ok
 }
