@@ -15,11 +15,12 @@ import (
 
 // FunctionInfo holds information about a compiled function
 type FunctionInfo struct {
-	Name       string
-	StartIP    int
-	EndIP      int
-	ParamCount int
-	ParamNames []string // Store parameter names for use in function body
+	Name         string
+	StartIP      int
+	EndIP        int
+	ParamCount   int
+	ParamNames   []string // Store parameter names for use in function body
+	ReceiverType string   // Store receiver type ("value" or "pointer")
 	// Reference to the ScriptFunction that will be registered at runtime
 	ScriptFunction *vm.ScriptFunction
 }
@@ -92,6 +93,7 @@ func (c *Compiler) Compile(file *ast.File) error {
 	// Create function info for all functions first
 	for _, fn := range c.functions {
 		var funcName string
+		var receiverType string // "value" or "pointer"
 		if fn.Recv != nil {
 			// This is a method declaration
 			// Get receiver type name to create a unique method name
@@ -102,10 +104,12 @@ func (c *Compiler) Compile(file *ast.File) error {
 				switch t := receiver.Type.(type) {
 				case *ast.Ident:
 					receiverTypeName = t.Name
+					receiverType = "value"
 				case *ast.StarExpr:
 					if ident, ok := t.X.(*ast.Ident); ok {
 						receiverTypeName = ident.Name
 					}
+					receiverType = "pointer"
 				}
 
 				// Create unique method name
@@ -120,8 +124,9 @@ func (c *Compiler) Compile(file *ast.File) error {
 
 		// Create function info
 		funcInfo := &FunctionInfo{
-			Name:       funcName,
-			ParamNames: make([]string, 0),
+			Name:         funcName,
+			ParamNames:   make([]string, 0),
+			ReceiverType: receiverType,
 		}
 
 		// Count parameters and collect parameter names
@@ -151,9 +156,10 @@ func (c *Compiler) Compile(file *ast.File) error {
 
 		// Create ScriptFunction that will be registered at runtime
 		funcInfo.ScriptFunction = &vm.ScriptFunction{
-			Name:       funcName, // Use the unique function name
-			ParamCount: funcInfo.ParamCount,
-			ParamNames: funcInfo.ParamNames,
+			Name:         funcName, // Use the unique function name
+			ParamCount:   funcInfo.ParamCount,
+			ParamNames:   funcInfo.ParamNames,
+			ReceiverType: receiverType,
 		}
 
 		// Store function info with the unique function name
@@ -372,16 +378,19 @@ func (c *Compiler) compileMethod(fn *ast.FuncDecl) error {
 
 	// Get receiver type name to create a unique method name
 	var receiverTypeName string
+	var receiverType string // "value" or "pointer"
 	if fn.Recv != nil && len(fn.Recv.List) > 0 {
 		receiver := fn.Recv.List[0]
 		// Extract type name from receiver
 		switch t := receiver.Type.(type) {
 		case *ast.Ident:
 			receiverTypeName = t.Name
+			receiverType = "value"
 		case *ast.StarExpr:
 			if ident, ok := t.X.(*ast.Ident); ok {
 				receiverTypeName = ident.Name
 			}
+			receiverType = "pointer"
 		}
 	}
 
@@ -391,12 +400,13 @@ func (c *Compiler) compileMethod(fn *ast.FuncDecl) error {
 		uniqueMethodName = receiverTypeName + "." + methodName
 	}
 
-	fmt.Printf("Compiling method: %s (unique name: %s)\n", methodName, uniqueMethodName)
+	fmt.Printf("Compiling method: %s (unique name: %s, receiver type: %s)\n", methodName, uniqueMethodName, receiverType)
 
 	// Create function info
 	funcInfo := &FunctionInfo{
-		Name:       uniqueMethodName,
-		ParamNames: make([]string, 0),
+		Name:         uniqueMethodName,
+		ParamNames:   make([]string, 0),
+		ReceiverType: receiverType,
 	}
 
 	// Add receiver as first parameter
@@ -422,10 +432,13 @@ func (c *Compiler) compileMethod(fn *ast.FuncDecl) error {
 
 	// Create ScriptFunction that will be registered at runtime
 	funcInfo.ScriptFunction = &vm.ScriptFunction{
-		Name:       uniqueMethodName,
-		ParamCount: funcInfo.ParamCount,
-		ParamNames: funcInfo.ParamNames,
+		Name:         uniqueMethodName,
+		ParamCount:   funcInfo.ParamCount,
+		ParamNames:   funcInfo.ParamNames,
+		ReceiverType: receiverType,
 	}
+
+	fmt.Printf("Registering script function: %s with receiver type: %s\n", uniqueMethodName, receiverType)
 
 	// Store function info
 	c.functionMap[uniqueMethodName] = funcInfo
@@ -604,7 +617,7 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 				}
 			}
 		case *ast.SelectorExpr:
-			// Handle field assignment (e.g., obj.field = value)
+			// Handle field assignment (egle., obj.field = value)
 			// Compile the object expression first
 			err := c.compileExpr(lhs.X)
 			if err != nil {
@@ -618,6 +631,31 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			// Emit instruction to set the field (arguments are in reverse order on stack)
 			// Stack: [object, fieldName, value] -> OpSetField takes: [object, fieldName, value]
 			c.emitInstruction(vm.NewInstruction(vm.OpSetField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index assignment (e.g., array[index] = value)
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// The value to assign is already on the stack from RHS compilation
+			// At this point, the stack should have: [value, array, index]
+			// But OpSetIndex expects: [array, index, value]
+			// So we need to rearrange the stack
+
+			// Emit instruction to rotate the top three elements
+			// This will change [value, array, index] to [array, index, value]
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
+
+			// Emit instruction to set the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
 		default:
 			return fmt.Errorf("unsupported assignment target: %T", lhs)
 		}
@@ -988,9 +1026,39 @@ func (c *Compiler) compileExpr(expr ast.Expr) error {
 		return c.compileCompositeLit(e)
 	case *ast.SelectorExpr:
 		return c.compileSelectorExpr(e)
+	case *ast.IndexExpr:
+		return c.compileIndexExpr(e)
+	case *ast.UnaryExpr:
+		return c.compileUnaryExpr(e)
 	default:
 		return fmt.Errorf("unsupported expression type: %T", expr)
 	}
+}
+
+// compileUnaryExpr compiles a unary expression
+func (c *Compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
+	// Compile the operand
+	err := c.compileExpr(expr.X)
+	if err != nil {
+		return err
+	}
+
+	// Handle different unary operators
+	switch expr.Op {
+	case token.AND: // & operator (address of)
+		// For now, we'll just leave the operand on the stack as-is
+		// In a more complete implementation, we would need to handle pointers properly
+		// For our simple case, we'll treat &Person{} as just Person{}
+		return nil
+	case token.SUB: // - operator (negation)
+		c.emitInstruction(vm.NewInstruction(vm.OpUnaryOp, vm.OpNeg, nil))
+	case token.NOT: // ! operator (logical not)
+		c.emitInstruction(vm.NewInstruction(vm.OpUnaryOp, vm.OpNot, nil))
+	default:
+		return fmt.Errorf("unsupported unary operator: %s", expr.Op)
+	}
+
+	return nil
 }
 
 // compileBasicLit compiles a basic literal
@@ -1107,6 +1175,8 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 		}
 
 		// For method calls, we pass the receiver as the first argument
+		// If the method has a value receiver (not pointer), we need to create a copy of the receiver
+		// For now, we'll assume all methods need the receiver as the first argument
 		c.emitInstruction(vm.NewInstruction(vm.OpCall, uniqueMethodName, argCount+1)) // +1 for receiver
 
 		return nil
@@ -1187,6 +1257,26 @@ func (c *Compiler) compileSelectorExpr(expr *ast.SelectorExpr) error {
 
 	// Emit instruction to get the field
 	c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
+
+	return nil
+}
+
+// compileIndexExpr compiles an index expression (e.g., array[index])
+func (c *Compiler) compileIndexExpr(expr *ast.IndexExpr) error {
+	// Compile the array/slice expression
+	err := c.compileExpr(expr.X)
+	if err != nil {
+		return err
+	}
+
+	// Compile the index expression
+	err = c.compileExpr(expr.Index)
+	if err != nil {
+		return err
+	}
+
+	// Emit instruction to get the element at the index
+	c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
 
 	return nil
 }

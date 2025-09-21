@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/lengzhao/goscript/types"
 )
 
 // ScopeManager manages variable scopes
@@ -45,7 +47,7 @@ type Variable struct {
 }
 
 // Function represents a callable function
-type Function func(args ...interface{}) (interface{}, error)
+type Function = types.Function
 
 // NewScopeManager creates a new scope manager
 func NewScopeManager() *ScopeManager {

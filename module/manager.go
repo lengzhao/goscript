@@ -6,11 +6,12 @@ import (
 
 	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/symbol"
+	"github.com/lengzhao/goscript/types"
 	"github.com/lengzhao/goscript/vm"
 )
 
 // Function represents a callable function in a module
-type Function func(args ...interface{}) (interface{}, error)
+type Function = types.Function
 
 // Module represents a module in GoScript
 type Module struct {

@@ -6,6 +6,9 @@ import (
 	"reflect"
 )
 
+// Function represents a callable function in GoScript
+type Function func(args ...interface{}) (interface{}, error)
+
 // Method represents a method signature
 type Method struct {
 	Name    string
@@ -97,14 +100,16 @@ func (bt *BaseType) Clone() IType {
 // DefaultValue returns the default value for this type
 func (bt *BaseType) DefaultValue() interface{} {
 	switch bt.kind {
+	case reflect.Bool:
+		return false
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return int(0)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return uint(0)
 	case reflect.Float32, reflect.Float64:
 		return float64(0.0)
 	case reflect.String:
 		return ""
-	case reflect.Bool:
-		return false
 	default:
 		return nil
 	}
@@ -117,33 +122,18 @@ func (bt *BaseType) Kind() reflect.Kind {
 
 // GetMethods returns all methods available on this type
 func (bt *BaseType) GetMethods() []Method {
-	// Basic types don't have methods
 	return []Method{}
 }
 
 // HasMethod checks if the type has a method with the given name
 func (bt *BaseType) HasMethod(name string) bool {
-	// Basic types don't have methods
 	return false
 }
 
 // GetMethod returns a method by name
 func (bt *BaseType) GetMethod(name string) (Method, bool) {
-	// Basic types don't have methods
 	return Method{}, false
 }
-
-// IntType represents the int type
-var IntType = NewBaseType("int", 8, reflect.Int)
-
-// Float64Type represents the float64 type
-var Float64Type = NewBaseType("float64", 8, reflect.Float64)
-
-// StringType represents the string type
-var StringType = NewBaseType("string", 16, reflect.String)
-
-// BoolType represents the bool type
-var BoolType = NewBaseType("bool", 1, reflect.Bool)
 
 // GetTypeByName returns a type by its name
 func GetTypeByName(name string) (IType, error) {
@@ -156,26 +146,21 @@ func GetTypeByName(name string) (IType, error) {
 		return StringType.Clone(), nil
 	case "bool":
 		return BoolType.Clone(), nil
+	case "interface{}":
+		return NewInterfaceType(""), nil
 	default:
-		return nil, fmt.Errorf("unknown type: %s", name)
+		// For unknown types, return an interface type as default
+		return NewInterfaceType(name), fmt.Errorf("unknown type: %s", name)
 	}
 }
 
-// TypeFromReflect returns a IType from a reflect.Type
-func TypeFromReflect(rt reflect.Type) IType {
-	switch rt.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return IntType.Clone()
-	case reflect.Float32, reflect.Float64:
-		return Float64Type.Clone()
-	case reflect.String:
-		return StringType.Clone()
-	case reflect.Bool:
-		return BoolType.Clone()
-	default:
-		return NewBaseType(rt.Name(), int(rt.Size()), rt.Kind())
-	}
-}
+// Predefined basic types
+var (
+	IntType     = NewBaseType("int", 8, reflect.Int)
+	Float64Type = NewBaseType("float64", 8, reflect.Float64)
+	StringType  = NewBaseType("string", 16, reflect.String) // Approximate size
+	BoolType    = NewBaseType("bool", 1, reflect.Bool)
+)
 
 // IsNumeric checks if a type is numeric
 func IsNumeric(t IType) bool {

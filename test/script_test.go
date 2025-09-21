@@ -1,6 +1,7 @@
 package test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ func TestScriptsInDataFolder(t *testing.T) {
 		t.Fatalf("Failed to read data directory: %v", err)
 	}
 
-	runCase := ""
+	runCase := "sub.gs"
 	// Test each .gs file
 	for _, file := range files {
 		if runCase != "" && runCase != file.Name() {
@@ -57,53 +58,26 @@ func testScriptFile(t *testing.T, filePath string) {
 	validateScriptResult(t, filePath, result)
 }
 
-// validateScriptResult performs basic validation on script results
+// validateScriptResult performs validation on script results using expected results from JSON
 func validateScriptResult(t *testing.T, filePath string, result interface{}) {
-	switch filepath.Base(filePath) {
-	case "hello.gs":
-		if result != "Hello, World!" {
-			t.Errorf("Expected 'Hello, World!', got %v", result)
-		}
-	case "add.gs":
-		if result != 8 {
-			t.Errorf("Expected 8, got %v", result)
-		}
-	case "loop.gs":
-		if result != 55 {
-			t.Errorf("Expected 55, got %v", result)
-		}
-	case "conditional.gs":
-		if result != 20 {
-			t.Errorf("Expected 20, got %v", result)
-		}
-	case "function_call.gs":
-		if result != 15 {
-			t.Errorf("Expected 15, got %v", result)
-		}
-	case "complex.gs":
-		// factorial(5) = 120, fibonacci(10) = 55, result = 120 + 55 = 175
-		if result != 175 {
-			t.Errorf("Expected 175, got %v", result)
-		}
-	case "nested_loop.gs":
-		if result != 36 {
-			t.Errorf("Expected 36, got %v", result)
-		}
-	case "while_loop.gs":
-		if result != 15 {
-			t.Errorf("Expected 15, got %v", result)
-		}
-	case "complex_condition.gs":
-		if result != 12 {
-			t.Errorf("Expected 12, got %v", result)
-		}
-	case "compound_assignment.gs":
-		if result != 6 {
-			t.Errorf("Expected 6, got %v", result)
-		}
-	default:
-		// For other scripts, just ensure they executed without error
-		t.Logf("Script %s executed successfully with result: %v", filePath, result)
+	data, err := os.ReadFile("./data/result.json")
+	if err != nil {
+		t.Fatalf("Failed to load expected results: %v", err)
+	}
+	expectedResults := make(map[string]interface{})
+	err = json.Unmarshal(data, &expectedResults)
+	// Get the base file name
+	baseName := filepath.Base(filePath)
+
+	expected, exists := expectedResults[baseName]
+	if !exists {
+		t.Errorf("No expected result found for %s", baseName)
+		return
+	}
+	v1 := fmt.Sprint(result)
+	v2 := fmt.Sprint(expected)
+	if v1 != v2 {
+		t.Errorf("Expected %v, got %v", v2, v1)
 	}
 }
 

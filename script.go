@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lengzhao/goscript/builtin"
 	"github.com/lengzhao/goscript/compiler"
 	execContext "github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/module"
@@ -62,6 +63,15 @@ func NewScript(source []byte) *Script {
 
 	// Set up default modules
 	script.setupDefaultModules()
+
+	// Register builtin functions with the VM
+	for name, fn := range builtin.BuiltInFunctions {
+		script.vm.RegisterFunction(name, func(f builtin.Function) func(args ...interface{}) (interface{}, error) {
+			return func(args ...interface{}) (interface{}, error) {
+				return f(args...)
+			}
+		}(fn))
+	}
 
 	return script
 }
@@ -206,6 +216,15 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	// Clear any existing instructions
 	s.vm = vm.NewVM()
 	s.vm.SetDebug(s.debug)
+
+	// Register builtin functions with the VM
+	for name, fn := range builtin.BuiltInFunctions {
+		s.vm.RegisterFunction(name, func(f builtin.Function) func(args ...interface{}) (interface{}, error) {
+			return func(args ...interface{}) (interface{}, error) {
+				return f(args...)
+			}
+		}(fn))
+	}
 
 	// Register module functions with the VM
 	if currentModule, exists := s.moduleManager.GetCurrentModule(); exists {

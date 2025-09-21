@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/lengzhao/goscript/builtin"
 	"github.com/lengzhao/goscript/types"
 )
 
@@ -38,9 +39,20 @@ func NewRuntime() *Runtime {
 	typeSystem["string"] = types.StringType.Clone()
 	typeSystem["bool"] = types.BoolType.Clone()
 
+	// Initialize with built-in functions
+	functions := make(map[string]Function)
+	for name, fn := range builtin.BuiltInFunctions {
+		// Convert builtin.Function to runtime.Function
+		functions[name] = func(f builtin.Function) Function {
+			return func(args ...interface{}) (interface{}, error) {
+				return f(args...)
+			}
+		}(fn)
+	}
+
 	return &Runtime{
 		Variables:  make(map[string]interface{}),
-		Functions:  make(map[string]Function),
+		Functions:  functions,
 		Types:      make(map[string]reflect.Type),
 		Modules:    make(map[string]Module),
 		TypeSystem: typeSystem,
@@ -162,7 +174,7 @@ func (r *Runtime) SetDebug(debug bool) {
 }
 
 // Function represents a callable function in the runtime
-type Function func(args ...interface{}) (interface{}, error)
+type Function = types.Function
 
 // Module represents a module in the runtime
 type Module interface {

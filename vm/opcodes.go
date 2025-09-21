@@ -51,6 +51,16 @@ const (
 
 	// Set a field of a struct
 	OpSetField
+
+	// Access an element of an array/slice by index
+	OpGetIndex
+
+	// Set an element of an array/slice by index
+	OpSetIndex
+
+	// Rotate the top three elements on the stack
+	// Changes [a, b, c] to [b, c, a]
+	OpRotate
 )
 
 // String returns the string representation of an OpCode
@@ -84,6 +94,12 @@ func (op OpCode) String() string {
 		return "OpGetField"
 	case OpSetField:
 		return "OpSetField"
+	case OpGetIndex:
+		return "OpGetIndex"
+	case OpSetIndex:
+		return "OpSetIndex"
+	case OpRotate:
+		return "OpRotate"
 	default:
 		return fmt.Sprintf("OpCode(%d)", op)
 	}
@@ -166,6 +182,12 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("GET_FIELD %v", i.Arg)
 	case OpSetField:
 		return fmt.Sprintf("SET_FIELD %v", i.Arg)
+	case OpGetIndex:
+		return fmt.Sprintf("GET_INDEX %v", i.Arg)
+	case OpSetIndex:
+		return fmt.Sprintf("SET_INDEX %v", i.Arg)
+	case OpRotate:
+		return fmt.Sprintf("ROTATE %v", i.Arg)
 	default:
 		return fmt.Sprintf("UNKNOWN(%d) %v %v", i.Op, i.Arg, i.Arg2)
 	}
@@ -206,11 +228,12 @@ type VM struct {
 
 // ScriptFunction represents a script-defined function
 type ScriptFunction struct {
-	Name       string
-	StartIP    int
-	EndIP      int
-	ParamCount int
-	ParamNames []string // Store parameter names for use in function body
+	Name         string
+	StartIP      int
+	EndIP        int
+	ParamCount   int
+	ParamNames   []string // Store parameter names for use in function body
+	ReceiverType string   // Store receiver type ("value" or "pointer")
 }
 
 // NewVM creates a new virtual machine
@@ -336,6 +359,35 @@ func (vm *VM) GetExecutionCount() int {
 	return vm.executionCount
 }
 
+// Helper function to get a field from a struct, including embedded structs
+func getFieldFromStruct(objMap map[string]interface{}, fieldName string) interface{} {
+	// First try to find the field directly
+	if field, exists := objMap[fieldName]; exists {
+		return field
+	}
+
+	// If not found directly, try to find it in embedded structs
+	// In a real implementation, we would need to recursively search embedded structs
+	// For now, we'll just check if there's an embedded struct with the same name as the field
+	// This is a simplified approach for demonstration purposes
+	for key, value := range objMap {
+		// Check if the key matches the field name (for embedded structs)
+		if key == fieldName {
+			return value
+		}
+
+		// If the value is a map (embedded struct), recursively search it
+		if embeddedMap, ok := value.(map[string]interface{}); ok {
+			if embeddedField := getFieldFromStruct(embeddedMap, fieldName); embeddedField != nil {
+				return embeddedField
+			}
+		}
+	}
+
+	// If not found, return nil
+	return nil
+}
+
 // Execute executes the instructions
 func (vm *VM) Execute() (interface{}, error) {
 	vm.ip = 0
@@ -380,10 +432,18 @@ func (vm *VM) Execute() (interface{}, error) {
 				return nil, fmt.Errorf("stack underflow in CALL: expected %d arguments, got %d", argCount, len(vm.stack))
 			}
 
-			// Pop arguments from stack
+			// Pop arguments from stack (in reverse order to maintain correct parameter order)
 			args := make([]interface{}, argCount)
 			for i := argCount - 1; i >= 0; i-- {
 				args[i] = vm.Pop()
+			}
+
+			// For script-defined functions, check if the receiver parameter needs to be copied
+			if scriptFunc, exists := vm.scriptFunctions[fnName]; exists && scriptFunc.ReceiverType == "value" && len(args) > 0 {
+				// If it's a map (struct) and the receiver type is "value", create a copy
+				if objMap, ok := args[0].(map[string]interface{}); ok {
+					args[0] = deepCopyMap(objMap)
+				}
 			}
 
 			// Execute function from registry
@@ -472,11 +532,9 @@ func (vm *VM) Execute() (interface{}, error) {
 
 			// For now, we assume obj is a map
 			if objMap, ok := obj.(map[string]interface{}); ok {
-				if field, exists := objMap[fieldNameStr]; exists {
-					vm.Push(field)
-				} else {
-					vm.Push(nil)
-				}
+				// Try to find the field, including in embedded structs
+				field := getFieldFromStruct(objMap, fieldNameStr)
+				vm.Push(field)
 			} else {
 				// If obj is not a map, return nil
 				vm.Push(nil)
@@ -506,7 +564,73 @@ func (vm *VM) Execute() (interface{}, error) {
 				// If obj is not a map, push it back unchanged
 				vm.Push(obj)
 			}
+		case OpGetIndex:
+			if len(vm.stack) < 2 {
+				return nil, fmt.Errorf("stack underflow in GET_INDEX: expected 2 values, got %d", len(vm.stack))
+			}
+			index := vm.Pop()
+			array := vm.Pop()
 
+			// Convert index to int if it's not already
+			var indexInt int
+			if i, ok := index.(int); ok {
+				indexInt = i
+			} else {
+				return nil, fmt.Errorf("index must be an integer, got %T", index)
+			}
+
+			// For now, we assume array is a slice of interface{}
+			if arraySlice, ok := array.([]interface{}); ok {
+				if indexInt >= 0 && indexInt < len(arraySlice) {
+					vm.Push(arraySlice[indexInt])
+				} else {
+					vm.Push(nil)
+				}
+			} else {
+				// If array is not a slice, return nil
+				vm.Push(nil)
+			}
+		case OpSetIndex:
+			if len(vm.stack) < 3 {
+				return nil, fmt.Errorf("stack underflow in SET_INDEX: expected 3 values, got %d", len(vm.stack))
+			}
+			value := vm.Pop()
+			index := vm.Pop()
+			array := vm.Pop()
+
+			// Convert index to int if it's not already
+			var indexInt int
+			if i, ok := index.(int); ok {
+				indexInt = i
+			} else {
+				return nil, fmt.Errorf("index must be an integer, got %T", index)
+			}
+
+			// For now, we assume array is a slice of interface{}
+			if arraySlice, ok := array.([]interface{}); ok {
+				if indexInt >= 0 && indexInt < len(arraySlice) {
+					arraySlice[indexInt] = value
+					// Push the modified array back onto the stack
+					vm.Push(arraySlice)
+				} else {
+					// Index out of bounds, push the array back unchanged
+					vm.Push(arraySlice)
+				}
+			} else {
+				// If array is not a slice, push it back unchanged
+				vm.Push(array)
+			}
+		case OpRotate:
+			if len(vm.stack) < 3 {
+				return nil, fmt.Errorf("stack underflow in ROTATE: expected 3 values, got %d", len(vm.stack))
+			}
+			// Rotate the top three elements: [a, b, c] -> [b, c, a]
+			top := vm.stack[len(vm.stack)-1]
+			second := vm.stack[len(vm.stack)-2]
+			third := vm.stack[len(vm.stack)-3]
+			vm.stack[len(vm.stack)-1] = third
+			vm.stack[len(vm.stack)-2] = top
+			vm.stack[len(vm.stack)-3] = second
 		}
 
 		vm.ip++
@@ -547,13 +671,26 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 	vm.locals = make(map[string]interface{})
 
 	// Set up function parameters as local variables
-	// Push parameters onto the stack in reverse order for the STORE_NAME instructions
-	// The function body will pop them off in the correct order
+	// Push parameters onto the stack in the correct order for the STORE_NAME instructions
 	if len(scriptFunc.ParamNames) > 0 && len(scriptFunc.ParamNames) == len(args) {
-		// Push parameters onto stack in reverse order
-		// This is because STORE_NAME pops from the stack
-		for i := len(args) - 1; i >= 0; i-- {
-			vm.Push(args[i])
+		// Push parameters onto stack in the correct order
+		// This is because STORE_NAME pops from the stack in reverse order
+		for i := 0; i < len(args); i++ {
+			// For value receivers, we need to create a copy of the struct
+			// For pointer receivers, we pass the struct as-is
+			if i == 0 && scriptFunc.ParamCount > 0 {
+				// This is the receiver parameter
+				// If it's a map (struct) and the receiver type is "value", create a copy
+				if objMap, ok := args[i].(map[string]interface{}); ok && scriptFunc.ReceiverType == "value" {
+					// Create a deep copy of the map
+					copyMap := deepCopyMap(objMap)
+					vm.Push(copyMap)
+				} else {
+					vm.Push(args[i])
+				}
+			} else {
+				vm.Push(args[i])
+			}
 		}
 	}
 
@@ -689,11 +826,9 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 
 			// For now, we assume obj is a map
 			if objMap, ok := obj.(map[string]interface{}); ok {
-				if field, exists := objMap[fieldNameStr]; exists {
-					vm.Push(field)
-				} else {
-					vm.Push(nil)
-				}
+				// Try to find the field, including in embedded structs
+				field := getFieldFromStruct(objMap, fieldNameStr)
+				vm.Push(field)
 			} else {
 				// If obj is not a map, return nil
 				vm.Push(nil)
@@ -723,6 +858,73 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 				// If obj is not a map, push it back unchanged
 				vm.Push(obj)
 			}
+		case OpGetIndex:
+			if len(vm.stack) < 2 {
+				return nil, fmt.Errorf("stack underflow in GET_INDEX: expected 2 values, got %d", len(vm.stack))
+			}
+			index := vm.Pop()
+			array := vm.Pop()
+
+			// Convert index to int if it's not already
+			var indexInt int
+			if i, ok := index.(int); ok {
+				indexInt = i
+			} else {
+				return nil, fmt.Errorf("index must be an integer, got %T", index)
+			}
+
+			// For now, we assume array is a slice of interface{}
+			if arraySlice, ok := array.([]interface{}); ok {
+				if indexInt >= 0 && indexInt < len(arraySlice) {
+					vm.Push(arraySlice[indexInt])
+				} else {
+					vm.Push(nil)
+				}
+			} else {
+				// If array is not a slice, return nil
+				vm.Push(nil)
+			}
+		case OpSetIndex:
+			if len(vm.stack) < 3 {
+				return nil, fmt.Errorf("stack underflow in SET_INDEX: expected 3 values, got %d", len(vm.stack))
+			}
+			value := vm.Pop()
+			index := vm.Pop()
+			array := vm.Pop()
+
+			// Convert index to int if it's not already
+			var indexInt int
+			if i, ok := index.(int); ok {
+				indexInt = i
+			} else {
+				return nil, fmt.Errorf("index must be an integer, got %T", index)
+			}
+
+			// For now, we assume array is a slice of interface{}
+			if arraySlice, ok := array.([]interface{}); ok {
+				if indexInt >= 0 && indexInt < len(arraySlice) {
+					arraySlice[indexInt] = value
+					// Push the modified array back onto the stack
+					vm.Push(arraySlice)
+				} else {
+					// Index out of bounds, push the array back unchanged
+					vm.Push(arraySlice)
+				}
+			} else {
+				// If array is not a slice, push it back unchanged
+				vm.Push(array)
+			}
+		case OpRotate:
+			if len(vm.stack) < 3 {
+				return nil, fmt.Errorf("stack underflow in ROTATE: expected 3 values, got %d", len(vm.stack))
+			}
+			// Rotate the top three elements: [a, b, c] -> [b, c, a]
+			top := vm.stack[len(vm.stack)-1]
+			second := vm.stack[len(vm.stack)-2]
+			third := vm.stack[len(vm.stack)-3]
+			vm.stack[len(vm.stack)-1] = third
+			vm.stack[len(vm.stack)-2] = top
+			vm.stack[len(vm.stack)-3] = second
 		}
 	}
 
@@ -732,6 +934,20 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 
 	// If we reach here, the function didn't return explicitly
 	return nil, nil
+}
+
+// deepCopyMap creates a deep copy of a map
+func deepCopyMap(original map[string]interface{}) map[string]interface{} {
+	copyMap := make(map[string]interface{})
+	for k, v := range original {
+		// For nested maps, we need to deep copy them as well
+		if nestedMap, ok := v.(map[string]interface{}); ok {
+			copyMap[k] = deepCopyMap(nestedMap)
+		} else {
+			copyMap[k] = v
+		}
+	}
+	return copyMap
 }
 
 // SetFunctionRegistry sets the function registry
