@@ -6,9 +6,9 @@ import (
 
 	"github.com/lengzhao/goscript/builtin"
 	"github.com/lengzhao/goscript/context"
+	"github.com/lengzhao/goscript/instruction"
 	"github.com/lengzhao/goscript/symbol"
 	"github.com/lengzhao/goscript/types"
-	"github.com/lengzhao/goscript/vm"
 )
 
 // Function represents a callable function in a module
@@ -20,7 +20,7 @@ type Module struct {
 	Name string
 
 	// Instructions are the bytecode instructions for the module
-	Instructions []*vm.Instruction
+	Instructions []*instruction.Instruction
 
 	// SymbolTable is the symbol table for the module
 	SymbolTable *symbol.SymbolTable
@@ -42,7 +42,7 @@ type Module struct {
 func NewModule(name string) *Module {
 	return &Module{
 		Name:         name,
-		Instructions: make([]*vm.Instruction, 0),
+		Instructions: make([]*instruction.Instruction, 0),
 		SymbolTable:  symbol.NewSymbolTable(),
 		Context:      context.NewExecutionContext(),
 		Functions:    make(map[string]Function),
@@ -52,7 +52,7 @@ func NewModule(name string) *Module {
 }
 
 // AddInstruction adds an instruction to the module
-func (m *Module) AddInstruction(instruction *vm.Instruction) {
+func (m *Module) AddInstruction(instruction *instruction.Instruction) {
 	m.Instructions = append(m.Instructions, instruction)
 
 	// Debug output
@@ -62,7 +62,7 @@ func (m *Module) AddInstruction(instruction *vm.Instruction) {
 }
 
 // GetInstructions returns all instructions in the module
-func (m *Module) GetInstructions() []*vm.Instruction {
+func (m *Module) GetInstructions() []*instruction.Instruction {
 	return m.Instructions
 }
 
@@ -267,7 +267,46 @@ func (mm *ModuleManager) GetCurrentModule() (*Module, bool) {
 func (mm *ModuleManager) CallModuleFunction(moduleName, functionName string, args ...interface{}) (interface{}, error) {
 	module, exists := mm.modules[moduleName]
 	if !exists {
-		return nil, fmt.Errorf("module %s not found", moduleName)
+		// Check if it's a builtin module
+		moduleFuncs, isBuiltin := builtin.GetModuleFunctions(moduleName)
+		if !isBuiltin {
+			return nil, fmt.Errorf("module %s not found", moduleName)
+		}
+
+		// Create a new module for the builtin functions
+		module = NewModule(moduleName)
+
+		// Add all functions from the builtin module
+		for funcName, fn := range moduleFuncs {
+			err := module.AddFunction(funcName, fn)
+			if err != nil {
+				return nil, fmt.Errorf("failed to add function %s to module %s: %w", funcName, moduleName, err)
+			}
+		}
+
+		// Register the module
+		err := mm.RegisterModule(module)
+		if err != nil {
+			return nil, fmt.Errorf("failed to register module %s: %w", moduleName, err)
+		}
+	} else {
+		// Module exists, check if the function is already registered
+		// If not, and it's a builtin module, add the function
+		_, funcExists := module.GetFunction(functionName)
+		if !funcExists {
+			// Check if it's a builtin module
+			moduleFuncs, isBuiltin := builtin.GetModuleFunctions(moduleName)
+			if isBuiltin {
+				// Check if the function exists in the builtin module
+				if fn, ok := moduleFuncs[functionName]; ok {
+					// Add the function to the module
+					err := module.AddFunction(functionName, fn)
+					if err != nil {
+						return nil, fmt.Errorf("failed to add function %s to module %s: %w", functionName, moduleName, err)
+					}
+				}
+			}
+		}
 	}
 
 	// Check if the function exists in the module
@@ -306,46 +345,24 @@ func (mm *ModuleManager) CallModuleFunction(moduleName, functionName string, arg
 
 // ImportModule imports a module into the current context
 func (mm *ModuleManager) ImportModule(moduleName string) error {
-	module, exists := mm.modules[moduleName]
+	// 只检查模块是否存在，不立即导入所有函数
+	_, exists := mm.modules[moduleName]
 	if !exists {
 		// Check if it's a builtin module
-		moduleFuncs, isBuiltin := builtin.GetModuleFunctions(moduleName)
+		_, isBuiltin := builtin.GetModuleFunctions(moduleName)
 		if !isBuiltin {
 			return fmt.Errorf("module %s not found", moduleName)
 		}
 
-		// Create a new module for the builtin functions
-		module = NewModule(moduleName)
-
-		// Add all functions from the builtin module
-		for funcName, fn := range moduleFuncs {
-			err := module.AddFunction(funcName, fn)
-			if err != nil {
-				return fmt.Errorf("failed to add function %s to module %s: %w", funcName, moduleName, err)
-			}
-		}
-
-		// Register the module
+		// 创建模块但不立即注册所有函数
+		module := NewModule(moduleName)
 		err := mm.RegisterModule(module)
 		if err != nil {
 			return fmt.Errorf("failed to register module %s: %w", moduleName, err)
 		}
 	}
 
-	// Import all symbols from the module into the context
-	symbols := module.SymbolTable.GetAllSymbols()
-	for name, sym := range symbols {
-		// For now, we'll just print a message as we don't have direct access to the symbol table
-		// In a real implementation, we would add the symbol to the context's symbol table
-		_ = name
-		_ = sym
-
-		// Debug output
-		if mm.debug {
-			fmt.Printf("ModuleManager: Imported symbol %s from module %s\n", name, moduleName)
-		}
-	}
-
+	// 只需记录模块已被导入，不需要实际导入所有函数
 	return nil
 }
 

@@ -214,6 +214,7 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	// Clear any existing instructions
 	s.vm = vm.NewVM()
 	s.vm.SetDebug(s.debug)
+	s.vm.SetModuleManager(s.moduleManager) // 设置模块管理器引用
 
 	// Set maximum instruction limit from security context
 	if execCtx.Security != nil && execCtx.Security.MaxInstructions > 0 {
@@ -270,21 +271,6 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 			continue
 		}
 		fmt.Printf("Successfully imported module %s\n", moduleName)
-	}
-
-	// Register all module functions with the VM
-	allModules := s.moduleManager.GetAllModules()
-	fmt.Printf("Registering functions from %d modules\n", len(allModules))
-	for _, module := range allModules {
-		functions := module.GetAllFunctions()
-		fmt.Printf("Module %s has %d functions\n", module.Name, len(functions))
-		for name, fn := range functions {
-			// Register each function with the VM
-			// For module functions, we register them with their full name (e.g., "strings.Contains")
-			fullName := module.Name + "." + name
-			fmt.Printf("Registering function: %s\n", fullName)
-			s.vm.RegisterFunction(fullName, fn)
-		}
 	}
 
 	// Register any functions that were added via AddFunction
