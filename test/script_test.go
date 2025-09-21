@@ -22,7 +22,8 @@ func TestScriptsInDataFolder(t *testing.T) {
 		t.Fatalf("Failed to read data directory: %v", err)
 	}
 
-	runCase := "" // 运行所有测试用例
+	// runCase := "range_advanced.gs" // 运行所有测试用例
+	runCase := "" // Run all test cases
 	// Test each .gs file
 	for _, file := range files {
 		if runCase != "" && runCase != file.Name() {

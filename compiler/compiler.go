@@ -608,23 +608,60 @@ func (c *Compiler) compileStmt(stmt ast.Stmt) error {
 
 // compileRangeStmt compiles a range statement
 func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
-	// Simplified implementation of range statement
-	// This converts range to a basic for loop structure
+	// More complete implementation of range statement
+	// This will iterate over the elements of a slice
 
-	// Compile the expression being ranged over
+	// Compile the expression being ranged over (the slice)
 	err := c.compileExpr(stmt.X)
 	if err != nil {
 		return err
 	}
 
-	// Pop the result (we're not using it in this simplified version)
-	c.emitInstruction(vm.NewInstruction(vm.OpPop, nil, nil))
+	// Get the length of the slice
+	c.emitInstruction(vm.NewInstruction(vm.OpLen, nil, nil))
+
+	// Store the length in a temporary variable
+	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_length", nil))
+
+	// Initialize counter
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, 0, nil)) // counter = 0
+	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_counter", nil))
+
+	// Start of loop
+	startIP := c.ip
+
+	// Check counter < length
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_length", nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpLess, nil))
+
+	// Jump if condition is false (counter >= length)
+	jumpIfInstr := vm.NewInstruction(vm.OpJumpIf, 0, nil) // Placeholder target
+	c.emitInstruction(jumpIfInstr)
 
 	// Compile the loop body
 	err = c.compileBlockStmt(stmt.Body)
 	if err != nil {
 		return err
 	}
+
+	// Increment counter
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, 1, nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpAdd, nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_counter", nil))
+
+	// Jump back to start
+	c.emitInstruction(vm.NewInstruction(vm.OpJump, startIP, nil))
+
+	// Update jump target to after the loop
+	jumpIfInstr.Arg = c.ip
+
+	// Clean up temporary variables
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_counter", nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_length", nil))
 
 	return nil
 }

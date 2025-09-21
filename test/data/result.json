@@ -21,5 +21,8 @@
   "builtin.gs": 13,
   "test_complex.gs":48,
   "test_simple.gs":8,
-  "loop2.gs": 28
+  "loop2.gs": 28,
+  "range_test.gs": 3,
+  "range_advanced.gs": 9,
+  "range_simple.gs": 3
 }

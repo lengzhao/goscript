@@ -76,6 +76,9 @@ const (
 
 	// Create a new slice
 	OpNewSlice
+
+	// Get the length of a slice or array
+	OpLen
 )
 
 // String returns the string representation of an OpCode
@@ -113,6 +116,8 @@ func (op OpCode) String() string {
 		return "OpGetField"
 	case OpSetField:
 		return "OpSetField"
+	case OpSetStructField:
+		return "OpSetStructField"
 	case OpGetIndex:
 		return "OpGetIndex"
 	case OpSetIndex:
@@ -121,6 +126,8 @@ func (op OpCode) String() string {
 		return "OpRotate"
 	case OpNewSlice:
 		return "OpNewSlice"
+	case OpLen:
+		return "OpLen"
 	default:
 		return fmt.Sprintf("OpCode(%d)", op)
 	}
@@ -177,12 +184,16 @@ func NewInstruction(op OpCode, arg interface{}, arg2 ...interface{}) *Instructio
 // String returns the string representation of an instruction
 func (i *Instruction) String() string {
 	switch i.Op {
+	case OpNop:
+		return "NOP"
 	case OpLoadConst:
 		return fmt.Sprintf("LOAD_CONST %v", i.Arg)
 	case OpLoadName:
 		return fmt.Sprintf("LOAD_NAME %v", i.Arg)
 	case OpStoreName:
 		return fmt.Sprintf("STORE_NAME %v", i.Arg)
+	case OpPop:
+		return "POP"
 	case OpCall:
 		return fmt.Sprintf("CALL %v %v", i.Arg, i.Arg2)
 	case OpCallMethod:
@@ -215,6 +226,8 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("ROTATE %v", i.Arg)
 	case OpNewSlice:
 		return fmt.Sprintf("NEW_SLICE %v", i.Arg)
+	case OpLen:
+		return fmt.Sprintf("LEN %v", i.Arg)
 	default:
 		return fmt.Sprintf("UNKNOWN(%d) %v %v", i.Op, i.Arg, i.Arg2)
 	}
@@ -870,6 +883,20 @@ func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
 			vm.stack[len(vm.stack)-1] = third
 			vm.stack[len(vm.stack)-2] = top
 			vm.stack[len(vm.stack)-3] = second
+		case OpLen:
+			if len(vm.stack) < 1 {
+				return nil, fmt.Errorf("stack underflow in LEN: expected 1 value, got %d", len(vm.stack))
+			}
+			value := vm.Pop()
+
+			// Get the length of the value if it's a slice or array
+			switch v := value.(type) {
+			case []interface{}:
+				vm.Push(len(v))
+			default:
+				// For other types, return 0
+				vm.Push(0)
+			}
 		}
 
 		vm.ip++
