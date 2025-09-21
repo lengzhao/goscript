@@ -79,6 +79,9 @@ const (
 
 	// Get the length of a slice or array
 	OpLen
+
+	// Get an element from a slice or array by index
+	OpGetElement
 )
 
 // String returns the string representation of an OpCode
@@ -128,6 +131,8 @@ func (op OpCode) String() string {
 		return "OpNewSlice"
 	case OpLen:
 		return "OpLen"
+	case OpGetElement:
+		return "OpGetElement"
 	default:
 		return fmt.Sprintf("OpCode(%d)", op)
 	}
@@ -228,6 +233,8 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("NEW_SLICE %v", i.Arg)
 	case OpLen:
 		return fmt.Sprintf("LEN %v", i.Arg)
+	case OpGetElement:
+		return fmt.Sprintf("GET_ELEMENT %v", i.Arg)
 	default:
 		return fmt.Sprintf("UNKNOWN(%d) %v %v", i.Op, i.Arg, i.Arg2)
 	}
@@ -896,6 +903,31 @@ func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
 			default:
 				// For other types, return 0
 				vm.Push(0)
+			}
+		case OpGetElement:
+			if len(vm.stack) < 2 {
+				return nil, fmt.Errorf("stack underflow in GET_ELEMENT: expected 2 values, got %d", len(vm.stack))
+			}
+			index := vm.Pop()
+			array := vm.Pop()
+
+			// Convert index to int if it's not already
+			var indexInt int
+			if i, ok := index.(int); ok {
+				indexInt = i
+			} else {
+				return nil, fmt.Errorf("index must be an integer, got %T", index)
+			}
+
+			// Get the element at the index if array is a slice
+			if arraySlice, ok := array.([]interface{}); ok {
+				if indexInt >= 0 && indexInt < len(arraySlice) {
+					vm.Push(arraySlice[indexInt])
+				} else {
+					vm.Push(nil)
+				}
+			} else {
+				vm.Push(nil)
 			}
 		}
 

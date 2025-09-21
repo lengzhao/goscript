@@ -617,6 +617,12 @@ func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 		return err
 	}
 
+	// Store the slice in a temporary variable
+	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_slice", nil))
+
+	// Load the slice again
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_slice", nil))
+
 	// Get the length of the slice
 	c.emitInstruction(vm.NewInstruction(vm.OpLen, nil, nil))
 
@@ -638,6 +644,35 @@ func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 	// Jump if condition is false (counter >= length)
 	jumpIfInstr := vm.NewInstruction(vm.OpJumpIf, 0, nil) // Placeholder target
 	c.emitInstruction(jumpIfInstr)
+
+	// If there's a key variable, assign the current counter value to it
+	// But skip if the key is the blank identifier "_"
+	if stmt.Key != nil {
+		if ident, ok := stmt.Key.(*ast.Ident); ok && ident.Name != "_" {
+			// Load the current counter value
+			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
+
+			// Store it in the key variable
+			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, ident.Name, nil))
+		}
+	}
+
+	// If there's a value variable, assign the current element value to it
+	if stmt.Value != nil {
+		// Load the slice
+		c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_slice", nil))
+
+		// Load the current counter (index)
+		c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
+
+		// Get the element at the index
+		c.emitInstruction(vm.NewInstruction(vm.OpGetElement, nil, nil))
+
+		// Store it in the value variable
+		if ident, ok := stmt.Value.(*ast.Ident); ok {
+			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, ident.Name, nil))
+		}
+	}
 
 	// Compile the loop body
 	err = c.compileBlockStmt(stmt.Body)
@@ -662,6 +697,8 @@ func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_counter", nil))
 	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
 	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_length", nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
+	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_slice", nil))
 
 	return nil
 }
