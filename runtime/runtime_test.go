@@ -25,8 +25,7 @@ func TestRuntime(t *testing.T) {
 		t.Error("Expected testVar to be deleted")
 	}
 
-	// Test function registration
-	testFn := NewBuiltInFunction("testFunc", func(args ...interface{}) (interface{}, error) {
+	rt.RegisterFunction("testFunc", func(args ...interface{}) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("expected 2 arguments")
 		}
@@ -37,18 +36,13 @@ func TestRuntime(t *testing.T) {
 		}
 		return a + b, nil
 	})
-
-	rt.RegisterFunction("testFunc", testFn)
 	fn, ok := rt.GetFunction("testFunc")
 	if !ok {
 		t.Error("Expected to find testFunc")
 	}
-	if fn.Name() != "testFunc" {
-		t.Errorf("Expected function name 'testFunc', got '%s'", fn.Name())
-	}
 
 	// Test function execution
-	result, err := fn.Call(10, 20)
+	result, err := fn(10, 20)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -74,9 +68,9 @@ func TestModule(t *testing.T) {
 	mockModule := &mockModule{
 		name: "mock",
 		functions: map[string]Function{
-			"mockFunc": NewBuiltInFunction("mockFunc", func(args ...interface{}) (interface{}, error) {
+			"mockFunc": func(args ...interface{}) (interface{}, error) {
 				return "mock result", nil
-			}),
+			},
 		},
 		types: map[string]reflect.Type{
 			"mockType": reflect.TypeOf(""),
@@ -109,7 +103,7 @@ func TestModule(t *testing.T) {
 	if !ok {
 		t.Error("Expected to find mockFunc in module")
 	}
-	result, err := fn.Call()
+	result, err := fn()
 	if err != nil {
 		t.Errorf("Expected no error calling mockFunc, got %v", err)
 	}
@@ -124,6 +118,32 @@ func TestModule(t *testing.T) {
 	}
 	if typ.Kind() != reflect.String {
 		t.Errorf("Expected string type, got %v", typ.Kind())
+	}
+}
+
+func TestRuntimeFunctionRegistration(t *testing.T) {
+	// Create runtime
+	rt := NewRuntime()
+
+	// Register a function
+	rt.RegisterFunction("test", func(args ...interface{}) (interface{}, error) {
+		return "test result", nil
+	})
+
+	// Get the function
+	fn, ok := rt.GetFunction("test")
+	if !ok {
+		t.Fatal("Expected to find function")
+	}
+
+	// Test the function
+	result, err := fn()
+	if err != nil {
+		t.Fatalf("Expected no error, got %v", err)
+	}
+
+	if result != "test result" {
+		t.Errorf("Expected 'test result', got %v", result)
 	}
 }
 

@@ -162,13 +162,7 @@ func (r *Runtime) SetDebug(debug bool) {
 }
 
 // Function represents a callable function in the runtime
-type Function interface {
-	// Call executes the function with the given arguments
-	Call(args ...interface{}) (interface{}, error)
-
-	// Name returns the function name
-	Name() string
-}
+type Function func(args ...interface{}) (interface{}, error)
 
 // Module represents a module in the runtime
 type Module interface {
@@ -180,35 +174,6 @@ type Module interface {
 
 	// GetType returns a type by name
 	GetType(name string) (reflect.Type, bool)
-}
-
-// BuiltInFunction represents a built-in function
-type BuiltInFunction struct {
-	name string
-	fn   func(args ...interface{}) (interface{}, error)
-}
-
-// NewBuiltInFunction creates a new built-in function
-func NewBuiltInFunction(name string, fn func(args ...interface{}) (interface{}, error)) *BuiltInFunction {
-	return &BuiltInFunction{
-		name: name,
-		fn:   fn,
-	}
-}
-
-// Call executes the built-in function
-func (f *BuiltInFunction) Call(args ...interface{}) (interface{}, error) {
-	// Debug output
-	if f.name != "" {
-		// Simple debug output for built-in functions
-	}
-
-	return f.fn(args...)
-}
-
-// Name returns the function name
-func (f *BuiltInFunction) Name() string {
-	return f.name
 }
 
 // Context holds the execution context for a script

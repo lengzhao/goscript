@@ -18,7 +18,7 @@ func TestScriptsInDataFolder(t *testing.T) {
 		t.Fatalf("Failed to read data directory: %v", err)
 	}
 
-	runCase := "complex.gs"
+	runCase := ""
 	// Test each .gs file
 	for _, file := range files {
 		if runCase != "" && runCase != file.Name() {
@@ -43,75 +43,6 @@ func testScriptFile(t *testing.T, filePath string) {
 	// Create a new script
 	script := goscript.NewScript(source)
 	script.SetDebug(true)
-
-	// // Register required functions based on script name
-	// switch filepath.Base(filePath) {
-	// case "add.gs":
-	// 	// Register add function
-	// 	script.AddFunction("add", goscript.NewSimpleFunction("add", func(args ...interface{}) (interface{}, error) {
-	// 		a := args[0].(int)
-	// 		b := args[1].(int)
-	// 		return a + b, nil
-	// 	}))
-	// case "sub.gs":
-	// 	// Register sub function
-	// 	script.AddFunction("sub", goscript.NewSimpleFunction("sub", func(args ...interface{}) (interface{}, error) {
-	// 		a := args[0].(int)
-	// 		b := args[1].(int)
-	// 		return a - b, nil
-	// 	}))
-	// case "complex.gs":
-	// 	// Register factorial function
-	// 	script.AddFunction("factorial", goscript.NewSimpleFunction("factorial", func(args ...interface{}) (interface{}, error) {
-	// 		n := args[0].(int)
-	// 		if n <= 1 {
-	// 			return 1, nil
-	// 		}
-	// 		result := 1
-	// 		for i := 2; i <= n; i++ {
-	// 			result *= i
-	// 		}
-	// 		return result, nil
-	// 	}))
-
-	// 	// Register fibonacci function
-	// 	script.AddFunction("fibonacci", goscript.NewSimpleFunction("fibonacci", func(args ...interface{}) (interface{}, error) {
-	// 		n := args[0].(int)
-	// 		if n <= 1 {
-	// 			return n, nil
-	// 		}
-	// 		a, b := 0, 1
-	// 		for i := 2; i <= n; i++ {
-	// 			a, b = b, a+b
-	// 		}
-	// 		return b, nil
-	// 	}))
-	// case "conditional.gs":
-	// 	// Register max function
-	// 	script.AddFunction("max", goscript.NewSimpleFunction("max", func(args ...interface{}) (interface{}, error) {
-	// 		a := args[0].(int)
-	// 		b := args[1].(int)
-	// 		if a > b {
-	// 			return a, nil
-	// 		}
-	// 		return b, nil
-	// 	}))
-	// case "function_call.gs":
-	// 	// Register calculate function
-	// 	script.AddFunction("calculate", goscript.NewSimpleFunction("calculate", func(args ...interface{}) (interface{}, error) {
-	// 		return 15, nil // 10 + 5
-	// 	}))
-	// case "loop.gs":
-	// 	// Register sum function
-	// 	script.AddFunction("sum", goscript.NewSimpleFunction("sum", func(args ...interface{}) (interface{}, error) {
-	// 		n := args[0].(int)
-	// 		total := 0
-	// 		for i := 1; i <= n; i++ {
-	// 			total += i
-	// 		}
-	// 		return total, nil
-	// 	}))
-	// }
 
 	// Run the script
 	result, err := script.Run()
@@ -154,6 +85,22 @@ func validateScriptResult(t *testing.T, filePath string, result interface{}) {
 		if result != 175 {
 			t.Errorf("Expected 175, got %v", result)
 		}
+	case "nested_loop.gs":
+		if result != 36 {
+			t.Errorf("Expected 36, got %v", result)
+		}
+	case "while_loop.gs":
+		if result != 15 {
+			t.Errorf("Expected 15, got %v", result)
+		}
+	case "complex_condition.gs":
+		if result != 12 {
+			t.Errorf("Expected 12, got %v", result)
+		}
+	case "compound_assignment.gs":
+		if result != 6 {
+			t.Errorf("Expected 6, got %v", result)
+		}
 	default:
 		// For other scripts, just ensure they executed without error
 		t.Logf("Script %s executed successfully with result: %v", filePath, result)
@@ -175,8 +122,8 @@ func main() {
 	// Create script
 	script := goscript.NewScript(source)
 
-	// Define a custom power function
-	powerFunc := goscript.NewSimpleFunction("power", func(args ...interface{}) (interface{}, error) {
+	// Register the custom function
+	err := script.AddFunction("power", func(args ...interface{}) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("power function requires 2 arguments")
 		}
@@ -191,9 +138,6 @@ func main() {
 		}
 		return result, nil
 	})
-
-	// Register the custom function
-	err := script.AddFunction("power", powerFunc)
 	if err != nil {
 		t.Fatalf("Failed to register custom function: %v", err)
 	}

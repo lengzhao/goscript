@@ -21,8 +21,8 @@ func main() {
 	// Create script
 	script := goscript.NewScript([]byte(scriptSource))
 
-	// Define a custom calculate function
-	calculateFunc := goscript.NewSimpleFunction("calculate", func(args ...interface{}) (interface{}, error) {
+	// Register the custom function
+	err := script.AddFunction("calculate", func(args ...interface{}) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("calculate function requires 2 arguments")
 		}
@@ -33,9 +33,6 @@ func main() {
 		}
 		return a + b*2, nil // Simple calculation: a + b*2
 	})
-
-	// Register the custom function
-	err := script.AddFunction("calculate", calculateFunc)
 	if err != nil {
 		log.Fatalf("Failed to register custom function: %v", err)
 	}

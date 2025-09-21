@@ -396,12 +396,13 @@ func (vm *VM) Execute() (interface{}, error) {
 				return nil, fmt.Errorf("stack underflow in JUMP_IF")
 			}
 			condition := vm.Pop()
-			if isTruthy(condition) {
+			// Jump if condition is FALSE (negate the condition)
+			if !isTruthy(condition) {
 				target := instr.Arg.(int)
 				if target < 0 || target >= len(vm.instructions) {
 					return nil, fmt.Errorf("invalid jump target: %d", target)
 				}
-				vm.ip = target
+				vm.ip = target - 1 // -1 because we increment at the end of the loop
 				vm.executionCount++
 				continue
 			}
@@ -559,7 +560,8 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 				return nil, fmt.Errorf("stack underflow in JUMP_IF")
 			}
 			condition := vm.Pop()
-			if isTruthy(condition) {
+			// Jump if condition is FALSE (negate the condition)
+			if !isTruthy(condition) {
 				target := instr.Arg.(int)
 				if target < 0 || target >= len(vm.instructions) {
 					return nil, fmt.Errorf("invalid jump target: %d", target)

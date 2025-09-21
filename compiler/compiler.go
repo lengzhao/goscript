@@ -37,9 +37,6 @@ type Compiler struct {
 	// Function definitions to compile after main
 	functions []*ast.FuncDecl
 
-	// Function names that will be registered (for compile-time lookup)
-	functionNames map[string]bool
-
 	// Compiled functions map
 	functionMap map[string]*FunctionInfo
 }
@@ -47,12 +44,11 @@ type Compiler struct {
 // NewCompiler creates a new compiler
 func NewCompiler(vm *vm.VM, context *context.ExecutionContext) *Compiler {
 	return &Compiler{
-		vm:            vm,
-		context:       context,
-		ip:            0,
-		functions:     make([]*ast.FuncDecl, 0),
-		functionNames: make(map[string]bool),
-		functionMap:   make(map[string]*FunctionInfo),
+		vm:          vm,
+		context:     context,
+		ip:          0,
+		functions:   make([]*ast.FuncDecl, 0),
+		functionMap: make(map[string]*FunctionInfo),
 	}
 }
 
@@ -62,8 +58,6 @@ func (c *Compiler) Compile(file *ast.File) error {
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok {
 			c.functions = append(c.functions, fn)
-			// Record function names for compile-time lookup
-			c.functionNames[fn.Name.Name] = true
 		}
 	}
 
@@ -216,6 +210,8 @@ func (c *Compiler) compileStmt(stmt ast.Stmt) error {
 		return c.compileIfStmt(s)
 	case *ast.ForStmt:
 		return c.compileForStmt(s)
+	case *ast.IncDecStmt:
+		return c.compileIncDecStmt(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -269,6 +265,78 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 		case *ast.Ident:
 			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
 		}
+	case token.SUB_ASSIGN:
+		// Handle -= operator
+		// First load the current value of the variable
+		switch lhs := stmt.Lhs[0].(type) {
+		case *ast.Ident:
+			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, lhs.Name, nil))
+		default:
+			return fmt.Errorf("unsupported assignment target for -=: %T", lhs)
+		}
+
+		// Compile the right-hand side expression
+		err := c.compileExpr(stmt.Rhs[0])
+		if err != nil {
+			return err
+		}
+
+		// Subtract the values
+		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpSub, nil))
+
+		// Store the result back
+		switch lhs := stmt.Lhs[0].(type) {
+		case *ast.Ident:
+			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
+		}
+	case token.MUL_ASSIGN:
+		// Handle *= operator
+		// First load the current value of the variable
+		switch lhs := stmt.Lhs[0].(type) {
+		case *ast.Ident:
+			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, lhs.Name, nil))
+		default:
+			return fmt.Errorf("unsupported assignment target for *=: %T", lhs)
+		}
+
+		// Compile the right-hand side expression
+		err := c.compileExpr(stmt.Rhs[0])
+		if err != nil {
+			return err
+		}
+
+		// Multiply the values
+		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpMul, nil))
+
+		// Store the result back
+		switch lhs := stmt.Lhs[0].(type) {
+		case *ast.Ident:
+			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
+		}
+	case token.QUO_ASSIGN:
+		// Handle /= operator
+		// First load the current value of the variable
+		switch lhs := stmt.Lhs[0].(type) {
+		case *ast.Ident:
+			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, lhs.Name, nil))
+		default:
+			return fmt.Errorf("unsupported assignment target for /=: %T", lhs)
+		}
+
+		// Compile the right-hand side expression
+		err := c.compileExpr(stmt.Rhs[0])
+		if err != nil {
+			return err
+		}
+
+		// Divide the values
+		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpDiv, nil))
+
+		// Store the result back
+		switch lhs := stmt.Lhs[0].(type) {
+		case *ast.Ident:
+			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
+		}
 	default:
 		return fmt.Errorf("unsupported assignment operator: %s", stmt.Tok)
 	}
@@ -304,6 +372,7 @@ func (c *Compiler) compileIfStmt(stmt *ast.IfStmt) error {
 	}
 
 	// Emit a conditional jump instruction (placeholder target)
+	// Jump if condition is FALSE (skip the if body)
 	jumpIfInstr := vm.NewInstruction(vm.OpJumpIf, 0, nil) // Placeholder target
 	c.emitInstruction(jumpIfInstr)
 
@@ -313,12 +382,16 @@ func (c *Compiler) compileIfStmt(stmt *ast.IfStmt) error {
 		return err
 	}
 
-	// Update the jump target to skip the else block (if exists)
-	// For now, we'll just jump to the end
-	jumpTarget := c.ip
+	// If there's an else block, we need to jump over it at the end of the if block
+	var elseJumpInstr *vm.Instruction
+	if stmt.Else != nil {
+		// Emit an unconditional jump to skip the else block
+		elseJumpInstr = vm.NewInstruction(vm.OpJump, 0, nil) // Placeholder target
+		c.emitInstruction(elseJumpInstr)
+	}
 
-	// Update the conditional jump instruction with the correct target
-	jumpIfInstr.Arg = jumpTarget
+	// Update the conditional jump target to after the if body
+	jumpIfInstr.Arg = c.ip
 
 	// Compile the else block if it exists
 	if stmt.Else != nil {
@@ -328,9 +401,18 @@ func (c *Compiler) compileIfStmt(stmt *ast.IfStmt) error {
 			if err != nil {
 				return err
 			}
+		case *ast.IfStmt:
+			// Handle else if as a nested if statement
+			err = c.compileIfStmt(elseStmt)
+			if err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("unsupported else statement type: %T", elseStmt)
 		}
+
+		// Update the else jump target to after the else block
+		elseJumpInstr.Arg = c.ip
 	}
 
 	return nil
@@ -338,6 +420,14 @@ func (c *Compiler) compileIfStmt(stmt *ast.IfStmt) error {
 
 // compileForStmt compiles a for statement
 func (c *Compiler) compileForStmt(stmt *ast.ForStmt) error {
+	// Compile the init statement if it exists
+	if stmt.Init != nil {
+		err := c.compileStmt(stmt.Init)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Save the start IP for looping
 	startIP := c.ip
 
@@ -358,6 +448,14 @@ func (c *Compiler) compileForStmt(stmt *ast.ForStmt) error {
 			return err
 		}
 
+		// Compile the post statement if it exists
+		if stmt.Post != nil {
+			err = c.compileStmt(stmt.Post)
+			if err != nil {
+				return err
+			}
+		}
+
 		// Emit an unconditional jump back to the start
 		c.emitInstruction(vm.NewInstruction(vm.OpJump, startIP, nil))
 
@@ -368,6 +466,14 @@ func (c *Compiler) compileForStmt(stmt *ast.ForStmt) error {
 		err := c.compileBlockStmt(stmt.Body)
 		if err != nil {
 			return err
+		}
+
+		// Compile the post statement if it exists
+		if stmt.Post != nil {
+			err = c.compileStmt(stmt.Post)
+			if err != nil {
+				return err
+			}
 		}
 
 		// Emit an unconditional jump back to the start
@@ -489,15 +595,8 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 		}
 	}
 
-	// Check if it's a script-defined function
-	if c.functionNames[ident.Name] {
-		// Emit the regular function call instruction
-		// Script functions use OpCall, the VM will determine it's a script function
-		c.emitInstruction(vm.NewInstruction(vm.OpCall, ident.Name, argCount))
-	} else {
-		// Emit the regular function call instruction for external functions
-		c.emitInstruction(vm.NewInstruction(vm.OpCall, ident.Name, argCount))
-	}
+	// Emit the regular function call instruction for external functions
+	c.emitInstruction(vm.NewInstruction(vm.OpCall, ident.Name, argCount))
 
 	return nil
 }
@@ -506,6 +605,40 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 func (c *Compiler) compileIdent(ident *ast.Ident) error {
 	// Emit a load name instruction
 	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, ident.Name, nil))
+
+	return nil
+}
+
+// compileIncDecStmt compiles an increment/decrement statement
+func (c *Compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
+	// Load the current value of the variable
+	switch x := stmt.X.(type) {
+	case *ast.Ident:
+		c.emitInstruction(vm.NewInstruction(vm.OpLoadName, x.Name, nil))
+	default:
+		return fmt.Errorf("unsupported increment/decrement target: %T", x)
+	}
+
+	// Load constant 1
+	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, 1, nil))
+
+	// Emit the appropriate binary operation
+	switch stmt.Tok {
+	case token.INC:
+		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpAdd, nil))
+	case token.DEC:
+		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpSub, nil))
+	default:
+		return fmt.Errorf("unsupported increment/decrement operator: %s", stmt.Tok)
+	}
+
+	// Store the result back to the variable
+	switch x := stmt.X.(type) {
+	case *ast.Ident:
+		c.emitInstruction(vm.NewInstruction(vm.OpStoreName, x.Name, nil))
+	default:
+		return fmt.Errorf("unsupported increment/decrement target: %T", x)
+	}
 
 	return nil
 }

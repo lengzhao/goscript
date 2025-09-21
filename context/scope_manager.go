@@ -45,13 +45,7 @@ type Variable struct {
 }
 
 // Function represents a callable function
-type Function interface {
-	// Call executes the function with the given arguments
-	Call(args ...interface{}) (interface{}, error)
-
-	// Name returns the function name
-	Name() string
-}
+type Function func(args ...interface{}) (interface{}, error)
 
 // NewScopeManager creates a new scope manager
 func NewScopeManager() *ScopeManager {

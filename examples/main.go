@@ -29,23 +29,17 @@ func main() {
 	// Create a new script
 	script := goscript.NewScript([]byte(""))
 
-	// Define a custom function
-	customFunc := &SimpleFunction{
-		name: "greet",
-		fn: func(args ...interface{}) (interface{}, error) {
-			if len(args) != 1 {
-				return nil, fmt.Errorf("greet function requires 1 argument")
-			}
-			name, ok := args[0].(string)
-			if !ok {
-				return nil, fmt.Errorf("greet function requires a string argument")
-			}
-			return fmt.Sprintf("Hello, %s!", name), nil
-		},
-	}
-
 	// Register the function
-	err := script.AddFunction("greet", customFunc)
+	err := script.AddFunction("greet", func(args ...interface{}) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("greet function requires 1 argument")
+		}
+		name, ok := args[0].(string)
+		if !ok {
+			return nil, fmt.Errorf("greet function requires a string argument")
+		}
+		return fmt.Sprintf("Hello, %s!", name), nil
+	})
 	if err != nil {
 		log.Fatal(err)
 	}

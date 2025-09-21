@@ -10,13 +10,7 @@ import (
 )
 
 // Function represents a callable function in a module
-type Function interface {
-	// Call executes the function with the given arguments
-	Call(args ...interface{}) (interface{}, error)
-
-	// Name returns the function name
-	Name() string
-}
+type Function func(args ...interface{}) (interface{}, error)
 
 // Module represents a module in GoScript
 type Module struct {
@@ -259,14 +253,14 @@ func (mm *ModuleManager) CallModuleFunction(moduleName, functionName string, arg
 		// it might be a built-in function or a variable
 		if fn, ok := symbol.Address.(Function); ok {
 			// Call the function
-			return fn.Call(args...)
+			return fn(args...)
 		}
 
 		return nil, fmt.Errorf("function %s not found in module %s", functionName, moduleName)
 	}
 
 	// Call the function
-	result, err := fn.Call(args...)
+	result, err := fn(args...)
 
 	// Debug output
 	if mm.debug {

@@ -90,18 +90,7 @@ func (s *Script) SetVariable(name string, value interface{}) error {
 }
 
 // AddFunction adds a function to the script
-func (s *Script) AddFunction(name string, fn interface{}) error {
-	// Convert to execContext.Function if needed
-	var execFn execContext.Function
-	switch f := fn.(type) {
-	case *SimpleFunction:
-		execFn = f
-	case execContext.Function:
-		execFn = f
-	default:
-		return fmt.Errorf("unsupported function type: %T", fn)
-	}
-
+func (s *Script) AddFunction(name string, execFn execContext.Function) error {
 	// Register the function in the global context
 	err := s.globalContext.RegisterFunction(name, execFn)
 	if err != nil {
@@ -109,7 +98,7 @@ func (s *Script) AddFunction(name string, fn interface{}) error {
 	}
 
 	// Also register with the VM directly for immediate use
-	s.vm.RegisterFunction(name, execFn.Call)
+	s.vm.RegisterFunction(name, execFn)
 
 	// Debug output
 	if s.debug {
@@ -154,7 +143,7 @@ func (s *Script) callFunctionInContext(name string, args ...interface{}) (interf
 
 	// Try to call the function in the global context
 	if fn, exists := s.globalContext.GetFunction(name); exists {
-		result, err := fn.Call(args...)
+		result, err := fn(args...)
 		if s.debug {
 			if err != nil {
 				fmt.Printf("Script: Error calling function %s: %v\n", name, err)
@@ -170,7 +159,7 @@ func (s *Script) callFunctionInContext(name string, args ...interface{}) (interf
 	if exists {
 		if function, ok := currentModule.GetFunction(name); ok {
 			// Call the function directly
-			result, err := function.Call(args...)
+			result, err := function(args...)
 			if s.debug {
 				if err != nil {
 					fmt.Printf("Script: Error calling module function %s: %v\n", name, err)
@@ -208,31 +197,6 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	scriptModule := module.NewModule("main")
 	scriptModule.SetDebug(s.debug)
 
-	// Add some sample functions for demonstration
-	// scriptModule.AddFunction("add", NewSimpleFunction("add", func(args ...interface{}) (interface{}, error) {
-	// 	if len(args) != 2 {
-	// 		return nil, fmt.Errorf("add function requires 2 arguments")
-	// 	}
-	// 	a, ok1 := args[0].(int)
-	// 	b, ok2 := args[1].(int)
-	// 	if !ok1 || !ok2 {
-	// 		return nil, fmt.Errorf("add function requires integer arguments")
-	// 	}
-	// 	return a + b, nil
-	// }))
-
-	// scriptModule.AddFunction("multiply", NewSimpleFunction("multiply", func(args ...interface{}) (interface{}, error) {
-	// 	if len(args) != 2 {
-	// 		return nil, fmt.Errorf("multiply function requires 2 arguments")
-	// 	}
-	// 	a, ok1 := args[0].(int)
-	// 	b, ok2 := args[1].(int)
-	// 	if !ok1 || !ok2 {
-	// 		return nil, fmt.Errorf("multiply function requires integer arguments")
-	// 	}
-	// 	return a * b, nil
-	// }))
-
 	// Register the module
 	s.moduleManager.RegisterModule(scriptModule)
 
@@ -246,9 +210,9 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	// Register module functions with the VM
 	if currentModule, exists := s.moduleManager.GetCurrentModule(); exists {
 		functions := currentModule.GetAllFunctions()
-		for _, fn := range functions {
+		for name, fn := range functions {
 			// Register each function with the VM
-			s.vm.RegisterFunction(fn.Name(), fn.Call)
+			s.vm.RegisterFunction(name, fn)
 		}
 	}
 
@@ -259,7 +223,7 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 		allFunctions := rootCtx.ScopeManager.GetAllFunctions()
 		for name, fn := range allFunctions {
 			// Register each function with the VM
-			s.vm.RegisterFunction(name, fn.Call)
+			s.vm.RegisterFunction(name, fn)
 		}
 	}
 
@@ -361,7 +325,7 @@ func (s *Script) GetRuntime() *runtime.Runtime {
 func (s *Script) setupDefaultModules() {
 	// Create and register math module
 	mathModule := module.NewModule("math")
-	mathModule.AddFunction("abs", NewSimpleFunction("abs", func(args ...interface{}) (interface{}, error) {
+	mathModule.AddFunction("abs", func(args ...interface{}) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("abs function requires 1 argument")
 		}
@@ -372,31 +336,7 @@ func (s *Script) setupDefaultModules() {
 			return val, nil
 		}
 		return nil, fmt.Errorf("abs function requires integer argument")
-	}))
+	})
 
 	s.moduleManager.RegisterModule(mathModule)
-}
-
-// SimpleFunction represents a simple function implementation
-type SimpleFunction struct {
-	name string
-	fn   func(args ...interface{}) (interface{}, error)
-}
-
-// NewSimpleFunction creates a new simple function
-func NewSimpleFunction(name string, fn func(args ...interface{}) (interface{}, error)) *SimpleFunction {
-	return &SimpleFunction{
-		name: name,
-		fn:   fn,
-	}
-}
-
-// Call executes the function
-func (f *SimpleFunction) Call(args ...interface{}) (interface{}, error) {
-	return f.fn(args...)
-}
-
-// Name returns the function name
-func (f *SimpleFunction) Name() string {
-	return f.name
 }
