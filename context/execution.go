@@ -271,6 +271,16 @@ func (ec *ExecutionContext) WithTimeout(timeout time.Duration) *ExecutionContext
 	// Create a new context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
+	// Create a copy of the security context and update the timeout
+	security := &SecurityContext{
+		MaxExecutionTime:  timeout,
+		MaxMemoryUsage:    ec.Security.MaxMemoryUsage,
+		AllowedModules:    ec.Security.AllowedModules,
+		ForbiddenKeywords: ec.Security.ForbiddenKeywords,
+		AllowCrossModule:  ec.Security.AllowCrossModule,
+		MaxInstructions:   ec.Security.MaxInstructions,
+	}
+
 	// Create a new execution context with the same scope manager
 	return &ExecutionContext{
 		Context:      ctx,
@@ -278,7 +288,7 @@ func (ec *ExecutionContext) WithTimeout(timeout time.Duration) *ExecutionContext
 		ScopeManager: ec.ScopeManager, // Share the same scope manager
 		ModuleName:   ec.ModuleName,
 		Parent:       ec.Parent,
-		Security:     ec.Security,
+		Security:     security,
 		Debug:        ec.Debug,
 	}
 }

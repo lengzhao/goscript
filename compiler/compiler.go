@@ -833,6 +833,22 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// Emit instruction to get the field
 			c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index access (e.g., array[index])
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// Emit instruction to get the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
 		default:
 			return fmt.Errorf("unsupported assignment target for +=: %T", lhs)
 		}
@@ -862,8 +878,36 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
 
 			// The value to assign is already on the stack from the addition operation
-			// Emit instruction to set the field
+			// Stack at this point: [result, object, fieldName]
+			// But OpSetStructField expects: [object, fieldName, result]
+			// So we need to rotate the stack
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
 			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index assignment (e.g., array[index] += value)
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// The value to assign is already on the stack from the addition operation
+			// At this point, the stack should have: [result, array, index]
+			// But OpSetIndex expects: [array, index, result]
+			// So we need to rearrange the stack
+
+			// Emit instruction to rotate the top three elements
+			// This will change [result, array, index] to [array, index, result]
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
+
+			// Emit instruction to set the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
 		}
 	case token.SUB_ASSIGN:
 		// Handle -= operator
@@ -884,6 +928,22 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// Emit instruction to get the field
 			c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index access (e.g., array[index])
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// Emit instruction to get the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
 		default:
 			return fmt.Errorf("unsupported assignment target for -=: %T", lhs)
 		}
@@ -913,8 +973,36 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
 
 			// The value to assign is already on the stack from the subtraction operation
-			// Emit instruction to set the field
+			// Stack at this point: [result, object, fieldName]
+			// But OpSetStructField expects: [object, fieldName, result]
+			// So we need to rotate the stack
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
 			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index assignment (e.g., array[index] -= value)
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// The value to assign is already on the stack from the subtraction operation
+			// At this point, the stack should have: [result, array, index]
+			// But OpSetIndex expects: [array, index, result]
+			// So we need to rearrange the stack
+
+			// Emit instruction to rotate the top three elements
+			// This will change [result, array, index] to [array, index, result]
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
+
+			// Emit instruction to set the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
 		}
 	case token.MUL_ASSIGN:
 		// Handle *= operator
@@ -935,6 +1023,22 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// Emit instruction to get the field
 			c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index access (e.g., array[index])
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// Emit instruction to get the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
 		default:
 			return fmt.Errorf("unsupported assignment target for *=: %T", lhs)
 		}
@@ -964,8 +1068,36 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
 
 			// The value to assign is already on the stack from the multiplication operation
-			// Emit instruction to set the field
+			// Stack at this point: [result, object, fieldName]
+			// But OpSetStructField expects: [object, fieldName, result]
+			// So we need to rotate the stack
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
 			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index assignment (e.g., array[index] *= value)
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// The value to assign is already on the stack from the multiplication operation
+			// At this point, the stack should have: [result, array, index]
+			// But OpSetIndex expects: [array, index, result]
+			// So we need to rearrange the stack
+
+			// Emit instruction to rotate the top three elements
+			// This will change [result, array, index] to [array, index, result]
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
+
+			// Emit instruction to set the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
 		}
 	case token.QUO_ASSIGN:
 		// Handle /= operator
@@ -986,6 +1118,22 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// Emit instruction to get the field
 			c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index access (e.g., array[index])
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// Emit instruction to get the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
 		default:
 			return fmt.Errorf("unsupported assignment target for /=: %T", lhs)
 		}
@@ -1015,9 +1163,38 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
 
 			// The value to assign is already on the stack from the division operation
-			// Emit instruction to set the field
+			// Stack at this point: [result, object, fieldName]
+			// But OpSetStructField expects: [object, fieldName, result]
+			// So we need to rotate the stack
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
 			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
+		case *ast.IndexExpr:
+			// Handle index assignment (e.g., array[index] /= value)
+			// Compile the array/slice expression first
+			err := c.compileExpr(lhs.X)
+			if err != nil {
+				return err
+			}
+
+			// Compile the index expression
+			err = c.compileExpr(lhs.Index)
+			if err != nil {
+				return err
+			}
+
+			// The value to assign is already on the stack from the division operation
+			// At this point, the stack should have: [result, array, index]
+			// But OpSetIndex expects: [array, index, result]
+			// So we need to rearrange the stack
+
+			// Emit instruction to rotate the top three elements
+			// This will change [result, array, index] to [array, index, result]
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
+
+			// Emit instruction to set the element at the index
+			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
 		}
+
 	default:
 		return fmt.Errorf("unsupported assignment operator: %s", stmt.Tok)
 	}
@@ -1520,6 +1697,35 @@ func (c *Compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
 	switch x := stmt.X.(type) {
 	case *ast.Ident:
 		c.emitInstruction(vm.NewInstruction(vm.OpLoadName, x.Name, nil))
+	case *ast.SelectorExpr:
+		// Handle field access (e.g., obj.field)
+		// Compile the object expression first
+		err := c.compileExpr(x.X)
+		if err != nil {
+			return err
+		}
+
+		// Push the field name as a constant
+		c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, x.Sel.Name, nil))
+
+		// Emit instruction to get the field
+		c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
+	case *ast.IndexExpr:
+		// Handle index access (e.g., array[index])
+		// Compile the array/slice expression first
+		err := c.compileExpr(x.X)
+		if err != nil {
+			return err
+		}
+
+		// Compile the index expression
+		err = c.compileExpr(x.Index)
+		if err != nil {
+			return err
+		}
+
+		// Emit instruction to get the element at the index
+		c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
 	default:
 		return fmt.Errorf("unsupported increment/decrement target: %T", x)
 	}
@@ -1541,6 +1747,45 @@ func (c *Compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
 	switch x := stmt.X.(type) {
 	case *ast.Ident:
 		c.emitInstruction(vm.NewInstruction(vm.OpStoreName, x.Name, nil))
+	case *ast.SelectorExpr:
+		// Handle field assignment (e.g., obj.field++)
+		// Compile the object expression first
+		err := c.compileExpr(x.X)
+		if err != nil {
+			return err
+		}
+
+		// Push the field name as a constant
+		c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, x.Sel.Name, nil))
+
+		// The value to assign is already on the stack from the addition/subtraction operation
+		// Emit instruction to set the field
+		c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
+	case *ast.IndexExpr:
+		// Handle index assignment (e.g., array[index]++)
+		// Compile the array/slice expression first
+		err := c.compileExpr(x.X)
+		if err != nil {
+			return err
+		}
+
+		// Compile the index expression
+		err = c.compileExpr(x.Index)
+		if err != nil {
+			return err
+		}
+
+		// The value to assign is already on the stack from the addition/subtraction operation
+		// At this point, the stack should have: [result, array, index]
+		// But OpSetIndex expects: [array, index, result]
+		// So we need to rearrange the stack
+
+		// Emit instruction to rotate the top three elements
+		// This will change [result, array, index] to [array, index, result]
+		c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
+
+		// Emit instruction to set the element at the index
+		c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
 	default:
 		return fmt.Errorf("unsupported increment/decrement target: %T", x)
 	}

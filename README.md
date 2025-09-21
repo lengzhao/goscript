@@ -4,7 +4,7 @@ GoScript是一个兼容Go标准语法的脚本引擎，它允许你在Go应用�
 
 ## 架构设计
 
-GoScript的架构设计详细信息请参见 [最终架构设计文档](docs/architecture_final.md)。
+GoScript的完整技术文档请参见 [综合技术文档](docs/architecture.md)。
 
 ## 特性
 
@@ -18,7 +18,7 @@ GoScript的架构设计详细信息请参见 [最终架构设计文档](docs/arc
 
 GoScript的架构包括以下核心组件：
 
-1. **词法分析器 (lexer)**：使用Go标准库的`go/scanner`进行词法分析
+1. **词法分析器 (parser)**：使用Go标准库的`go/scanner`进行词法分析
 2. **语法分析器 (parser)**：使用Go标准库的`go/parser`进行语法分析
 3. **抽象语法树 (ast)**：使用Go标准库的`go/ast`处理AST节点
 4. **编译器 (compiler)**：将AST编译为可执行的中间表示（字节码）
