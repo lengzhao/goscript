@@ -2,81 +2,49 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"os"
 	"time"
 
 	goscript "github.com/lengzhao/goscript"
-	"github.com/lengzhao/goscript/context"
+	execContext "github.com/lengzhao/goscript/context"
 )
 
-// SimpleFunction represents a simple function implementation
-type SimpleFunction struct {
-	name string
-	fn   func(args ...interface{}) (interface{}, error)
-}
-
-// Call executes the function
-func (f *SimpleFunction) Call(args ...interface{}) (interface{}, error) {
-	return f.fn(args...)
-}
-
-// Name returns the function name
-func (f *SimpleFunction) Name() string {
-	return f.name
-}
-
 func main() {
+	// Read script file from command line argument
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run main.go <script_file>")
+		return
+	}
+
+	scriptFile := os.Args[1]
+	source, err := os.ReadFile(scriptFile)
+	if err != nil {
+		fmt.Printf("Failed to read script file: %v\n", err)
+		return
+	}
+
 	// Create a new script
-	script := goscript.NewScript([]byte(""))
+	script := goscript.NewScript(source)
+	script.SetDebug(true) // Enable debug mode
 
-	// Register the function
-	err := script.AddFunction("greet", func(args ...interface{}) (interface{}, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("greet function requires 1 argument")
-		}
-		name, ok := args[0].(string)
-		if !ok {
-			return nil, fmt.Errorf("greet function requires a string argument")
-		}
-		return fmt.Sprintf("Hello, %s!", name), nil
-	})
+	// Set security context with higher instruction limit
+	securityCtx := &execContext.SecurityContext{
+		MaxExecutionTime:  5 * time.Second,
+		MaxMemoryUsage:    10 * 1024 * 1024, // 10MB
+		AllowedModules:    []string{"fmt", "math"},
+		ForbiddenKeywords: []string{"unsafe"},
+		AllowCrossModule:  true,
+		MaxInstructions:   100000, // Increased instruction limit
+	}
+	script.SetSecurityContext(securityCtx)
+
+	// Run the script
+	result, err := script.Run()
 	if err != nil {
-		log.Fatal(err)
+		fmt.Printf("Failed to run script: %v\n", err)
+		return
 	}
 
-	// Test calling the function
-	result, err := script.CallFunction("greet", "World")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("Result: %v\n", result)
-
-	// Test timeout functionality
-	fmt.Println("Testing timeout functionality...")
-
-	// Create a script with timeout
-	scriptWithTimeout := goscript.NewScript([]byte(""))
-
-	// Set security context with timeout
-	securityCtx := &context.SecurityContext{
-		MaxExecutionTime: 2 * time.Second,
-		MaxMemoryUsage:   10 * 1024 * 1024, // 10MB
-		AllowedModules:   []string{"fmt", "math"},
-	}
-
-	scriptWithTimeout.SetSecurityContext(securityCtx)
-
-	// Test the timeout
-	execCtx := scriptWithTimeout.GetGlobalContext()
-	timeoutCtx := execCtx.WithTimeout(1 * time.Second)
-
-	// Get deadlines
-	origDeadline, _ := execCtx.Deadline()
-	timeoutDeadline, _ := timeoutCtx.Deadline()
-
-	fmt.Printf("Original context deadline: %v\n", origDeadline)
-	fmt.Printf("Timeout context deadline: %v\n", timeoutDeadline)
-
-	fmt.Println("All tests passed!")
+	// Print the result
+	fmt.Printf("Script executed successfully, result: %v\n", result)
 }

@@ -31,7 +31,7 @@ GoScript的架构包括以下核心组件：
 
 ## 安装
 
-```bash
+```
 go get github.com/lengzhao/goscript
 ```
 
@@ -39,7 +39,7 @@ go get github.com/lengzhao/goscript
 
 ### 基本用法
 
-```go
+```
 package main
 
 import (
@@ -83,7 +83,7 @@ func main() {
 
 ### 自定义函数
 
-```go
+```
 // 创建自定义函数
 func customFunction(args ...interface{}) (interface{}, error) {
     if len(args) != 2 {
@@ -129,7 +129,7 @@ func main() {
 
 词法分析器将源代码分解为标记(tokens)：
 
-```go
+```
 tokens, err := script.Lex()
 if err != nil {
     // 处理错误
@@ -144,7 +144,7 @@ for _, token := range tokens {
 
 语法分析器将标记转换为抽象语法树(AST)：
 
-```go
+```
 ast, err := script.Parse()
 if err != nil {
     // 处理错误
@@ -161,7 +161,7 @@ ast.Inspect(ast, func(n ast.Node) bool {
 
 编译器将AST编译为字节码：
 
-```go
+```
 // 创建编译器
 compiler := compiler.NewCompiler(runtime)
 
@@ -179,7 +179,7 @@ if err != nil {
 
 运行时管理脚本执行环境中的变量、函数、类型和模块：
 
-```go
+```
 // 创建运行时
 rt := runtime.NewRuntime()
 
@@ -198,7 +198,7 @@ rt.SetVariable("testVar", 42)
 
 虚拟机负责执行编译后的字节码：
 
-```go
+```
 // 创建虚拟机
 vmInstance := vm.NewVM(runtime)
 
@@ -213,11 +213,26 @@ vmInstance.Push(42)
 value := vmInstance.Pop()
 ```
 
-## 安全机制
+## 安全特性
 
-GoScript提供多种安全机制来限制脚本执行：
+GoScript 提供了多种安全机制来防止脚本滥用系统资源：
 
-```go
+### 1. 执行时间限制
+通过 SecurityContext.MaxExecutionTime 设置脚本最大执行时间，防止长时间运行的脚本阻塞系统。
+
+### 2. 内存使用限制
+通过 SecurityContext.MaxMemoryUsage 限制脚本可以使用的最大内存量。
+
+### 3. 指令数限制
+通过 SecurityContext.MaxInstructions 限制脚本可以执行的最大指令数，防止脚本陷入死循环。
+
+### 4. 模块访问控制
+通过 SecurityContext.AllowedModules 和 SecurityContext.ForbiddenKeywords 控制脚本可以访问的模块和关键字。
+
+### 5. 跨模块访问控制
+通过 SecurityContext.AllowCrossModule 控制脚本是否可以访问其他模块。
+
+```
 securityCtx := &goscript.SecurityContext{
     MaxExecutionTime: 5 * time.Second,     // 最大执行时间
     MaxMemoryUsage:   10 * 1024 * 1024,    // 最大内存使用 (10MB)
@@ -231,13 +246,13 @@ script.SetSecurityContext(securityCtx)
 
 运行所有测试：
 
-```bash
+```
 go test ./...
 ```
 
 运行特定包的测试：
 
-```bash
+```
 go test ./lexer -v
 go test ./parser -v
 go test ./ast -v
@@ -261,14 +276,14 @@ go test ./vm -v
 
 运行演示程序：
 
-```bash
+```
 cd cmd/demo
 go run main.go
 ```
 
 运行特定示例：
 
-```bash
+```
 cd examples/compiler
 go run main.go
 ```

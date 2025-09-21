@@ -217,6 +217,11 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	s.vm = vm.NewVM()
 	s.vm.SetDebug(s.debug)
 
+	// Set maximum instruction limit from security context
+	if execCtx.Security != nil && execCtx.Security.MaxInstructions > 0 {
+		s.vm.SetMaxInstructions(execCtx.Security.MaxInstructions)
+	}
+
 	// Register builtin functions with the VM
 	for name, fn := range builtin.BuiltInFunctions {
 		s.vm.RegisterFunction(name, func(f builtin.Function) func(args ...interface{}) (interface{}, error) {
@@ -255,7 +260,7 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	}
 
 	// Execute the VM
-	result, err := s.vm.Execute()
+	result, err := s.vm.Execute(ctx)
 
 	// Update execution statistics
 	s.executionStats.ExecutionTime = time.Since(startTime)

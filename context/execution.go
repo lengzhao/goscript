@@ -38,6 +38,7 @@ type SecurityContext struct {
 	AllowedModules    []string
 	ForbiddenKeywords []string
 	AllowCrossModule  bool
+	MaxInstructions   int64 // 添加最大执行指令数限制
 }
 
 // NewExecutionContext creates a new execution context
@@ -56,6 +57,7 @@ func NewExecutionContext() *ExecutionContext {
 			AllowedModules:    []string{"fmt", "math"},
 			ForbiddenKeywords: []string{"unsafe"},
 			AllowCrossModule:  true,
+			MaxInstructions:   1000000, // 默认最大指令数限制为100万条指令
 		},
 		Debug: false,
 	}
@@ -77,6 +79,7 @@ func NewExecutionContextWithTimeout(timeout time.Duration) *ExecutionContext {
 			AllowedModules:    []string{"fmt", "math"},
 			ForbiddenKeywords: []string{"unsafe"},
 			AllowCrossModule:  true,
+			MaxInstructions:   1000000, // 默认最大指令数限制为100万条指令
 		},
 		Debug: false,
 	}

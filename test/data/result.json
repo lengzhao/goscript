@@ -20,5 +20,6 @@
   "struct_example.gs": 400,
   "builtin.gs": 13,
   "test_complex.gs":48,
-  "test_simple.gs":8
+  "test_simple.gs":8,
+  "loop2.gs": 28
 }

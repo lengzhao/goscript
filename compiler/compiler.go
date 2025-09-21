@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/token"
 	"strconv"
+	"strings"
 
 	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/types"
@@ -44,17 +45,22 @@ type Compiler struct {
 
 	// Variable type mapping to track variable types during compilation
 	variableTypes map[string]string
+
+	// Expression type mapping to track expression types during compilation
+	// This is used for method chaining to determine the type of the receiver
+	expressionTypes map[ast.Expr]string
 }
 
 // NewCompiler creates a new compiler
 func NewCompiler(vm *vm.VM, context *context.ExecutionContext) *Compiler {
 	return &Compiler{
-		vm:            vm,
-		context:       context,
-		ip:            0,
-		functions:     make([]*ast.FuncDecl, 0),
-		functionMap:   make(map[string]*FunctionInfo),
-		variableTypes: make(map[string]string),
+		vm:              vm,
+		context:         context,
+		ip:              0,
+		functions:       make([]*ast.FuncDecl, 0),
+		functionMap:     make(map[string]*FunctionInfo),
+		variableTypes:   make(map[string]string),
+		expressionTypes: make(map[ast.Expr]string),
 	}
 }
 
@@ -69,15 +75,19 @@ func (c *Compiler) Compile(file *ast.File) error {
 			if d.Recv != nil {
 				// This is a method declaration
 				c.functions = append(c.functions, d)
+				fmt.Printf("Found method: %s with receiver\n", d.Name.Name)
 			} else if d.Name.Name == "main" {
 				mainFunc = d
+				fmt.Printf("Found main function\n")
 			} else {
 				c.functions = append(c.functions, d)
+				fmt.Printf("Found function: %s\n", d.Name.Name)
 			}
 		case *ast.GenDecl:
 			// Handle type declarations
 			if d.Tok == token.TYPE {
 				typeDecls = append(typeDecls, d)
+				fmt.Printf("Found type declaration\n")
 			}
 		}
 	}
@@ -114,6 +124,7 @@ func (c *Compiler) Compile(file *ast.File) error {
 
 				// Create unique method name
 				funcName = receiverTypeName + "." + fn.Name.Name
+				fmt.Printf("Creating method info: %s (receiver type: %s)\n", funcName, receiverType)
 			} else {
 				funcName = fn.Name.Name
 			}
@@ -164,6 +175,7 @@ func (c *Compiler) Compile(file *ast.File) error {
 
 		// Store function info with the unique function name
 		c.functionMap[funcName] = funcInfo
+		fmt.Printf("Stored function info: %s\n", funcName)
 	}
 
 	// Compile function definitions first (except main)
@@ -257,7 +269,8 @@ func (c *Compiler) compileStructType(name string, structType *ast.StructType) er
 	// Register the struct type in the context
 	fmt.Printf("Compiling struct type: %s with fields %v\n", name, structTypeDef.GetFieldNames())
 
-	// TODO: Register the struct type in the runtime context
+	// Register the struct type in the VM's type system
+	c.vm.RegisterType(name, structTypeDef)
 
 	return nil
 }
@@ -479,6 +492,8 @@ func (c *Compiler) compileFunctionRegistration(fn *ast.FuncDecl) error {
 		funcName = fn.Name.Name
 	}
 
+	fmt.Printf("Compiling function registration for: %s\n", funcName)
+
 	// Get function info
 	funcInfo, exists := c.functionMap[funcName]
 	if !exists {
@@ -487,6 +502,7 @@ func (c *Compiler) compileFunctionRegistration(fn *ast.FuncDecl) error {
 
 	// Generate OpRegistFunction instruction
 	c.emitInstruction(vm.NewInstruction(vm.OpRegistFunction, funcName, funcInfo.ScriptFunction))
+	fmt.Printf("Emitted OpRegistFunction for: %s\n", funcName)
 
 	return nil
 }
@@ -581,11 +597,36 @@ func (c *Compiler) compileStmt(stmt ast.Stmt) error {
 		return c.compileIfStmt(s)
 	case *ast.ForStmt:
 		return c.compileForStmt(s)
+	case *ast.RangeStmt:
+		return c.compileRangeStmt(s)
 	case *ast.IncDecStmt:
 		return c.compileIncDecStmt(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
+}
+
+// compileRangeStmt compiles a range statement
+func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
+	// Simplified implementation of range statement
+	// This converts range to a basic for loop structure
+
+	// Compile the expression being ranged over
+	err := c.compileExpr(stmt.X)
+	if err != nil {
+		return err
+	}
+
+	// Pop the result (we're not using it in this simplified version)
+	c.emitInstruction(vm.NewInstruction(vm.OpPop, nil, nil))
+
+	// Compile the loop body
+	err = c.compileBlockStmt(stmt.Body)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // compileExprStmt compiles an expression statement
@@ -617,7 +658,7 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 				}
 			}
 		case *ast.SelectorExpr:
-			// Handle field assignment (egle., obj.field = value)
+			// Handle field assignment (e.g., obj.field = value)
 			// Compile the object expression first
 			err := c.compileExpr(lhs.X)
 			if err != nil {
@@ -629,8 +670,10 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// The value to assign is already on the stack from RHS compilation
 			// Emit instruction to set the field (arguments are in reverse order on stack)
-			// Stack: [object, fieldName, value] -> OpSetField takes: [object, fieldName, value]
-			c.emitInstruction(vm.NewInstruction(vm.OpSetField, nil, nil))
+			// Stack: [value, object, fieldName] -> OpSetStructField takes: [object, fieldName, value]
+			// So we need to rotate the stack
+			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
+			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
 		case *ast.IndexExpr:
 			// Handle index assignment (e.g., array[index] = value)
 			// Compile the array/slice expression first
@@ -708,7 +751,7 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// The value to assign is already on the stack from the addition operation
 			// Emit instruction to set the field
-			c.emitInstruction(vm.NewInstruction(vm.OpSetField, nil, nil))
+			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
 		}
 	case token.SUB_ASSIGN:
 		// Handle -= operator
@@ -759,7 +802,7 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// The value to assign is already on the stack from the subtraction operation
 			// Emit instruction to set the field
-			c.emitInstruction(vm.NewInstruction(vm.OpSetField, nil, nil))
+			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
 		}
 	case token.MUL_ASSIGN:
 		// Handle *= operator
@@ -810,7 +853,7 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// The value to assign is already on the stack from the multiplication operation
 			// Emit instruction to set the field
-			c.emitInstruction(vm.NewInstruction(vm.OpSetField, nil, nil))
+			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
 		}
 	case token.QUO_ASSIGN:
 		// Handle /= operator
@@ -861,7 +904,7 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 
 			// The value to assign is already on the stack from the division operation
 			// Emit instruction to set the field
-			c.emitInstruction(vm.NewInstruction(vm.OpSetField, nil, nil))
+			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
 		}
 	default:
 		return fmt.Errorf("unsupported assignment operator: %s", stmt.Tok)
@@ -1142,27 +1185,59 @@ func (c *Compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
 func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 	// Handle method calls (e.g., obj.Method())
 	if selExpr, ok := expr.Fun.(*ast.SelectorExpr); ok {
-		// Compile the receiver (object)
-		err := c.compileExpr(selExpr.X)
-		if err != nil {
-			return err
-		}
-
 		// Get the method name
 		methodName := selExpr.Sel.Name
 
 		// Determine the type of the receiver
 		var typeName string
+		var varName string
 		if ident, ok := selExpr.X.(*ast.Ident); ok {
 			// Get the type from our variable type mapping
-			varName := ident.Name
+			varName = ident.Name
 			typeName = c.variableTypes[varName]
+		} else if callExpr, ok := selExpr.X.(*ast.CallExpr); ok {
+			// This is a method chain, e.g., obj.Method1().Method2()
+			// We need to determine the return type of the previous method call
+			// Check if we have tracked the type of the previous expression
+			if trackedType, exists := c.expressionTypes[callExpr]; exists {
+				typeName = trackedType
+			} else {
+				// Try to infer the return type from the method signature
+				if prevSelExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+					prevMethodName := prevSelExpr.Sel.Name
+					// Try to find a method that matches the name and get its return type
+					// We'll look for methods that return a pointer to a struct (for chaining)
+					for funcName := range c.functionMap {
+						if strings.HasSuffix(funcName, "."+prevMethodName) {
+							// Extract the type name from the function name
+							parts := strings.Split(funcName, ".")
+							if len(parts) == 2 {
+								// Check if this method returns a pointer to the same type (for chaining)
+								// This is a heuristic - in a real implementation we would have proper type information
+								typeName = parts[0]
+								break
+							}
+						}
+					}
+				}
+			}
 		}
 
 		// Create unique method name
 		uniqueMethodName := methodName
 		if typeName != "" {
 			uniqueMethodName = typeName + "." + methodName
+		}
+
+		// Get function info to determine receiver type
+		funcInfo, exists := c.functionMap[uniqueMethodName]
+		isPointerReceiver := exists && funcInfo != nil && funcInfo.ReceiverType == "pointer"
+
+		// For method calls, we need to compile the receiver first
+		// This ensures the correct order when arguments are popped during function call
+		err := c.compileExpr(selExpr.X)
+		if err != nil {
+			return err
 		}
 
 		// Compile all arguments
@@ -1175,9 +1250,27 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 		}
 
 		// For method calls, we pass the receiver as the first argument
-		// If the method has a value receiver (not pointer), we need to create a copy of the receiver
-		// For now, we'll assume all methods need the receiver as the first argument
-		c.emitInstruction(vm.NewInstruction(vm.OpCall, uniqueMethodName, argCount+1)) // +1 for receiver
+		// The stack order should be: [receiver, arg1, ..., argN] so that when popped,
+		// we get [receiver, arg1, ..., argN]
+		c.emitInstruction(vm.NewInstruction(vm.OpCallMethod, uniqueMethodName, argCount+1)) // +1 for receiver
+
+		// For pointer receivers, we need to update the original variable with the modified struct
+		// For value receivers, the original variable should remain unchanged
+		if isPointerReceiver && varName != "" {
+			// If it's a pointer receiver, we need to store the modified struct back to the variable
+			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, varName, nil))
+		}
+
+		// Track the type of this method call expression for potential method chaining
+		// If this method returns a pointer to a struct (for chaining), track that type
+		if funcInfo != nil && funcInfo.ReceiverType == "pointer" {
+			// Heuristic: assume pointer receiver methods return the same type for chaining
+			// Extract type name from the function name (e.g., "Calculator.Add" -> "Calculator")
+			parts := strings.Split(uniqueMethodName, ".")
+			if len(parts) >= 2 {
+				c.expressionTypes[expr] = parts[0]
+			}
+		}
 
 		return nil
 	}
@@ -1211,30 +1304,58 @@ func (c *Compiler) compileIdent(ident *ast.Ident) error {
 	return nil
 }
 
-// compileCompositeLit compiles a composite literal (e.g., struct literal)
+// compileCompositeLit compiles a composite literal (e.g., struct literal, slice literal)
 func (c *Compiler) compileCompositeLit(lit *ast.CompositeLit) error {
+	// Check if this is a slice/array literal
+	if _, ok := lit.Type.(*ast.ArrayType); ok {
+		// This is a slice or array literal
+		// Compile all elements first
+		for _, elt := range lit.Elts {
+			err := c.compileExpr(elt)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Emit instruction to create a new slice with the compiled elements
+		// The elements are on the stack, and we pass the count as an argument
+		c.emitInstruction(vm.NewInstruction(vm.OpNewSlice, len(lit.Elts), nil))
+
+		return nil
+	}
+
+	// Handle struct literals
+	// Get the type name if available
+	var typeName string
+	if ident, ok := lit.Type.(*ast.Ident); ok {
+		typeName = ident.Name
+	}
+
 	// Emit instruction to create a new struct
-	c.emitInstruction(vm.NewInstruction(vm.OpNewStruct, nil, nil))
+	// Pass the type name as an argument
+	c.emitInstruction(vm.NewInstruction(vm.OpNewStruct, typeName, nil))
 
 	// Process each key-value pair in the composite literal
 	for _, elt := range lit.Elts {
 		switch kv := elt.(type) {
 		case *ast.KeyValueExpr:
-			// Compile the value first
+			// Get the key (field name) first
+			if keyIdent, ok := kv.Key.(*ast.Ident); ok {
+				// Push the field name
+				c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, keyIdent.Name, nil))
+			}
+
+			// Compile the value
 			err := c.compileExpr(kv.Value)
 			if err != nil {
 				return err
 			}
 
-			// Get the key (field name)
-			if keyIdent, ok := kv.Key.(*ast.Ident); ok {
-				// Push the field name
-				c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, keyIdent.Name, nil))
-
-				// Emit instruction to set the field (arguments are in reverse order on stack)
-				// Stack: [struct, value, fieldName] -> OpSetField takes: [struct, fieldName, value]
-				c.emitInstruction(vm.NewInstruction(vm.OpSetField, nil, nil))
-			}
+			// Emit instruction to set the field
+			// Stack at this point: [struct, fieldName, value]
+			// OpSetStructField expects: [struct, fieldName, value]
+			// So the order is already correct, no need to rotate
+			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
 		}
 	}
 

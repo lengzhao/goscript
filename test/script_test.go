@@ -1,13 +1,16 @@
 package test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	goscript "github.com/lengzhao/goscript"
+	execContext "github.com/lengzhao/goscript/context"
 )
 
 // TestScriptsInDataFolder tests all .gs scripts in the test/data folder
@@ -19,7 +22,7 @@ func TestScriptsInDataFolder(t *testing.T) {
 		t.Fatalf("Failed to read data directory: %v", err)
 	}
 
-	runCase := "sub.gs"
+	runCase := "" // 运行所有测试用例
 	// Test each .gs file
 	for _, file := range files {
 		if runCase != "" && runCase != file.Name() {
@@ -43,10 +46,24 @@ func testScriptFile(t *testing.T, filePath string) {
 
 	// Create a new script
 	script := goscript.NewScript(source)
-	script.SetDebug(true)
+	script.SetDebug(true) // Enable debug mode
 
+	// 设置较大的指令数限制
+	securityCtx := &execContext.SecurityContext{
+		MaxExecutionTime:  5 * time.Second,
+		MaxMemoryUsage:    10 * 1024 * 1024, // 10MB
+		AllowedModules:    []string{"fmt", "math"},
+		ForbiddenKeywords: []string{"unsafe"},
+		AllowCrossModule:  true,
+		MaxInstructions:   10000, // 设置较小的指令数限制用于简单脚本
+	}
+	script.SetSecurityContext(securityCtx)
+
+	ctx := context.Background()
+	ctx1, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	// Run the script
-	result, err := script.Run()
+	result, err := script.RunContext(ctx1)
 	if err != nil {
 		t.Fatalf("Failed to run script %s: %v", filePath, err)
 	}
@@ -66,6 +83,9 @@ func validateScriptResult(t *testing.T, filePath string, result interface{}) {
 	}
 	expectedResults := make(map[string]interface{})
 	err = json.Unmarshal(data, &expectedResults)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal expected results: %v", err)
+	}
 	// Get the base file name
 	baseName := filepath.Base(filePath)
 
