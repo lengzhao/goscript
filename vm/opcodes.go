@@ -126,8 +126,8 @@ func NewInstruction(op OpCode, arg interface{}, arg2 ...interface{}) *Instructio
 
 // VM represents the virtual machine
 type VM struct {
-	// Stack for expression evaluation
-	stack []interface{}
+	// Optimized stack for expression evaluation
+	stack *Stack
 
 	// Global variables
 	globals map[string]interface{}
@@ -189,7 +189,7 @@ func NewVM() *VM {
 	typeSystem["bool"] = types.BoolType.Clone()
 
 	vm := &VM{
-		stack:            make([]interface{}, 0),
+		stack:            NewStack(64, 10000), // 初始容量64，最大10000
 		globals:          make(map[string]interface{}),
 		locals:           make(map[string]interface{}),
 		instructions:     make([]*Instruction, 0),
@@ -233,32 +233,36 @@ func (vm *VM) GetScriptFunction(name string) (*ScriptFunction, bool) {
 
 // Push pushes a value onto the stack
 func (vm *VM) Push(value interface{}) {
-	vm.stack = append(vm.stack, value)
+	if err := vm.stack.Push(value); err != nil {
+		// In case of stack overflow, we could panic or handle gracefully
+		// For now, we'll panic as this indicates a serious issue
+		panic(fmt.Sprintf("Stack overflow: %v", err))
+	}
 }
 
 // Pop pops a value from the stack
 func (vm *VM) Pop() interface{} {
-	if len(vm.stack) == 0 {
+	value, err := vm.stack.Pop()
+	if err != nil {
+		// Return nil for stack underflow to maintain backward compatibility
 		return nil
 	}
-
-	value := vm.stack[len(vm.stack)-1]
-	vm.stack = vm.stack[:len(vm.stack)-1]
 	return value
 }
 
 // Peek returns the top value without removing it
 func (vm *VM) Peek() interface{} {
-	if len(vm.stack) == 0 {
+	value, err := vm.stack.Peek()
+	if err != nil {
+		// Return nil for stack underflow to maintain backward compatibility
 		return nil
 	}
-
-	return vm.stack[len(vm.stack)-1]
+	return value
 }
 
 // StackSize returns the current stack size
 func (vm *VM) StackSize() int {
-	return len(vm.stack)
+	return vm.stack.Size()
 }
 
 // SetGlobal sets a global variable
@@ -301,7 +305,7 @@ func (vm *VM) GetInstructions() []*Instruction {
 
 // Clear clears the VM state
 func (vm *VM) Clear() {
-	vm.stack = vm.stack[:0]
+	vm.stack.Clear()
 	vm.locals = make(map[string]interface{})
 	vm.instructions = vm.instructions[:0]
 	vm.ip = 0
@@ -378,7 +382,7 @@ func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
 
 		// Debug output
 		if vm.debug {
-			fmt.Printf("IP: %d, Instruction: %s, Stack: %v\n", vm.ip, instr.String(), vm.stack)
+			fmt.Printf("IP: %d, Instruction: %s, Stack: %v\n", vm.ip, instr.String(), vm.stack.GetSlice())
 		}
 
 		// Use dispatch table instead of switch-case
@@ -513,7 +517,7 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 			}
 		case OpStoreName:
 			name := instr.Arg.(string)
-			if len(vm.stack) == 0 {
+			if vm.stack.Size() == 0 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
@@ -528,12 +532,12 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 			argCount := instr.Arg2.(int)
 
 			// Check if we have enough arguments on the stack
-			if len(vm.stack) < argCount {
+			if vm.stack.Size() < argCount {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in CALL: expected %d arguments, got %d", argCount, len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in CALL: expected %d arguments, got %d", argCount, vm.stack.Size())
 			}
 
 			// Pop arguments from stack (in reverse order to maintain correct parameter order)
@@ -566,7 +570,7 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 
 			vm.Push(result)
 		case OpReturn:
-			if len(vm.stack) == 0 {
+			if vm.stack.Size() == 0 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
@@ -597,7 +601,7 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 			}
 			vm.ip = target - 1 // -1 because we increment at the end of the loop
 		case OpJumpIf:
-			if len(vm.stack) == 0 {
+			if vm.stack.Size() == 0 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
@@ -618,12 +622,12 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 				vm.ip = target - 1 // -1 because we increment at the end of the loop
 			}
 		case OpBinaryOp:
-			if len(vm.stack) < 2 {
+			if vm.stack.Size() < 2 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in BINARY_OP: expected 2 values, got %d", len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in BINARY_OP: expected 2 values, got %d", vm.stack.Size())
 			}
 			right := vm.Pop()
 			left := vm.Pop()
@@ -639,12 +643,12 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 
 			vm.Push(result)
 		case OpUnaryOp:
-			if len(vm.stack) < 1 {
+			if vm.stack.Size() < 1 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in UNARY_OP: expected 1 value, got %d", len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in UNARY_OP: expected 1 value, got %d", vm.stack.Size())
 			}
 			value := vm.Pop()
 
@@ -687,12 +691,12 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 
 			vm.Push(structInstance)
 		case OpGetField:
-			if len(vm.stack) < 2 {
+			if vm.stack.Size() < 2 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in GET_FIELD: expected 2 values, got %d", len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in GET_FIELD: expected 2 values, got %d", vm.stack.Size())
 			}
 			fieldName := vm.Pop()
 			obj := vm.Pop()
@@ -717,15 +721,15 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 		case OpSetField:
 			// Debug output
 			if vm.debug {
-				fmt.Printf("Function IP: %d, About to execute SET_FIELD, Stack size: %d, Stack: %v\n", vm.ip, len(vm.stack), vm.stack)
+				fmt.Printf("Function IP: %d, About to execute SET_FIELD, Stack size: %d, Stack: %v\n", vm.ip, vm.stack.Size(), vm.stack)
 			}
 
-			if len(vm.stack) < 3 {
+			if vm.stack.Size() < 3 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in SET_FIELD: expected 3 values, got %d", len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in SET_FIELD: expected 3 values, got %d", vm.stack.Size())
 			}
 			fieldName := vm.Pop()
 			value := vm.Pop()
@@ -763,15 +767,15 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 		case OpSetStructField:
 			// Debug output
 			if vm.debug {
-				fmt.Printf("Function IP: %d, About to execute SET_STRUCT_FIELD, Stack size: %d, Stack: %v\n", vm.ip, len(vm.stack), vm.stack)
+				fmt.Printf("Function IP: %d, About to execute SET_STRUCT_FIELD, Stack size: %d, Stack: %v\n", vm.ip, vm.stack.Size(), vm.stack)
 			}
 
-			if len(vm.stack) < 3 {
+			if vm.stack.Size() < 3 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in SET_STRUCT_FIELD: expected 3 values, got %d", len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in SET_STRUCT_FIELD: expected 3 values, got %d", vm.stack.Size())
 			}
 			// Pop in reverse order to get the correct values
 			// Stack order should be: [object, fieldName, value]
@@ -809,12 +813,12 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 				vm.Push(obj)
 			}
 		case OpGetIndex:
-			if len(vm.stack) < 2 {
+			if vm.stack.Size() < 2 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in GET_INDEX: expected 2 values, got %d", len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in GET_INDEX: expected 2 values, got %d", vm.stack.Size())
 			}
 			index := vm.Pop()
 			array := vm.Pop()
@@ -843,12 +847,12 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 				vm.Push(nil)
 			}
 		case OpSetIndex:
-			if len(vm.stack) < 3 {
+			if vm.stack.Size() < 3 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in SET_INDEX: expected 3 values, got %d", len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in SET_INDEX: expected 3 values, got %d", vm.stack.Size())
 			}
 			value := vm.Pop()
 			index := vm.Pop()
@@ -881,20 +885,17 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 				vm.Push(array)
 			}
 		case OpRotate:
-			if len(vm.stack) < 3 {
+			if vm.stack.Size() < 3 {
 				// Restore execution state before returning error
 				vm.ip = currentIP
 				vm.locals = currentLocals
 				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in ROTATE: expected 3 values, got %d", len(vm.stack))
+				return nil, fmt.Errorf("stack underflow in ROTATE: expected 3 values, got %d", vm.stack.Size())
 			}
 			// Rotate the top three elements: [a, b, c] -> [b, c, a]
-			top := vm.stack[len(vm.stack)-1]
-			second := vm.stack[len(vm.stack)-2]
-			third := vm.stack[len(vm.stack)-3]
-			vm.stack[len(vm.stack)-1] = third
-			vm.stack[len(vm.stack)-2] = top
-			vm.stack[len(vm.stack)-3] = second
+			if err := vm.stack.Rotate(3); err != nil {
+				return nil, fmt.Errorf("rotate failed: %v", err)
+			}
 		}
 
 		vm.executionCount++

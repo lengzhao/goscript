@@ -121,7 +121,7 @@ func (vm *VM) handleStoreName(v *VM, instr *Instruction) error {
 		}
 	}
 
-	if len(v.stack) == 0 {
+	if v.stack.IsEmpty() {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 1 value for STORE_NAME",
@@ -136,7 +136,7 @@ func (vm *VM) handleStoreName(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handlePop(v *VM, instr *Instruction) error {
-	if len(v.stack) == 0 {
+	if v.stack.IsEmpty() {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 1 value for POP",
@@ -172,10 +172,10 @@ func (vm *VM) handleCall(v *VM, instr *Instruction) error {
 	}
 
 	// Check if we have enough arguments on the stack
-	if len(v.stack) < argCount {
+	if v.stack.Size() < argCount {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
-			Message: fmt.Sprintf("expected %d arguments, got %d", argCount, len(v.stack)),
+			Message: fmt.Sprintf("expected %d arguments, got %d", argCount, v.stack.Size()),
 			IP:      v.ip,
 			OpCode:  OpCall,
 		}
@@ -233,10 +233,10 @@ func (vm *VM) handleCallMethod(v *VM, instr *Instruction) error {
 	}
 
 	// Check if we have enough arguments on the stack
-	if len(v.stack) < argCount {
+	if v.stack.Size() < argCount {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
-			Message: fmt.Sprintf("expected %d arguments, got %d", argCount, len(v.stack)),
+			Message: fmt.Sprintf("expected %d arguments, got %d", argCount, v.stack.Size()),
 			IP:      v.ip,
 			OpCode:  OpCallMethod,
 		}
@@ -324,7 +324,7 @@ func (vm *VM) handleRegistFunction(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleReturn(v *VM, instr *Instruction) error {
-	if len(v.stack) == 0 {
+	if v.stack.IsEmpty() {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 1 value for RETURN",
@@ -366,7 +366,7 @@ func (vm *VM) handleJump(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleJumpIf(v *VM, instr *Instruction) error {
-	if len(v.stack) == 0 {
+	if v.stack.IsEmpty() {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 1 value for JUMP_IF",
@@ -405,7 +405,7 @@ func (vm *VM) handleJumpIf(v *VM, instr *Instruction) error {
 // Arithmetic operation handlers
 
 func (vm *VM) handleBinaryOp(v *VM, instr *Instruction) error {
-	if len(v.stack) < 2 {
+	if v.stack.Size() < 2 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 2 values for BINARY_OP",
@@ -442,7 +442,7 @@ func (vm *VM) handleBinaryOp(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleUnaryOp(v *VM, instr *Instruction) error {
-	if len(v.stack) < 1 {
+	if v.stack.Size() < 1 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 1 value for UNARY_OP",
@@ -516,10 +516,10 @@ func (vm *VM) handleNewSlice(v *VM, instr *Instruction) error {
 	}
 
 	// Check if we have enough elements on the stack
-	if len(v.stack) < elementCount {
+	if v.stack.Size() < elementCount {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
-			Message: fmt.Sprintf("expected %d elements, got %d", elementCount, len(v.stack)),
+			Message: fmt.Sprintf("expected %d elements, got %d", elementCount, v.stack.Size()),
 			IP:      v.ip,
 			OpCode:  OpNewSlice,
 		}
@@ -537,7 +537,7 @@ func (vm *VM) handleNewSlice(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleGetField(v *VM, instr *Instruction) error {
-	if len(v.stack) < 2 {
+	if v.stack.Size() < 2 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 2 values for GET_FIELD",
@@ -571,7 +571,7 @@ func (vm *VM) handleGetField(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleSetField(v *VM, instr *Instruction) error {
-	if len(v.stack) < 3 {
+	if v.stack.Size() < 3 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 3 values for SET_FIELD",
@@ -617,7 +617,7 @@ func (vm *VM) handleSetField(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleSetStructField(v *VM, instr *Instruction) error {
-	if len(v.stack) < 3 {
+	if v.stack.Size() < 3 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 3 values for SET_STRUCT_FIELD",
@@ -663,7 +663,7 @@ func (vm *VM) handleSetStructField(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleGetIndex(v *VM, instr *Instruction) error {
-	if len(v.stack) < 2 {
+	if v.stack.Size() < 2 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 2 values for GET_INDEX",
@@ -704,7 +704,7 @@ func (vm *VM) handleGetIndex(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleSetIndex(v *VM, instr *Instruction) error {
-	if len(v.stack) < 3 {
+	if v.stack.Size() < 3 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 3 values for SET_INDEX",
@@ -749,7 +749,7 @@ func (vm *VM) handleSetIndex(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleRotate(v *VM, instr *Instruction) error {
-	if len(v.stack) < 3 {
+	if v.stack.Size() < 3 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 3 values for ROTATE",
@@ -759,18 +759,11 @@ func (vm *VM) handleRotate(v *VM, instr *Instruction) error {
 	}
 
 	// Rotate the top three elements: [a, b, c] -> [b, c, a]
-	top := v.stack[len(v.stack)-1]
-	second := v.stack[len(v.stack)-2]
-	third := v.stack[len(v.stack)-3]
-	v.stack[len(v.stack)-1] = third
-	v.stack[len(v.stack)-2] = top
-	v.stack[len(v.stack)-3] = second
-
-	return nil
+	return v.stack.Rotate(3)
 }
 
 func (vm *VM) handleLen(v *VM, instr *Instruction) error {
-	if len(v.stack) < 1 {
+	if v.stack.Size() < 1 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 1 value for LEN",
@@ -794,7 +787,7 @@ func (vm *VM) handleLen(v *VM, instr *Instruction) error {
 }
 
 func (vm *VM) handleGetElement(v *VM, instr *Instruction) error {
-	if len(v.stack) < 2 {
+	if v.stack.Size() < 2 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 2 values for GET_ELEMENT",
@@ -836,7 +829,7 @@ func (vm *VM) handleGetElement(v *VM, instr *Instruction) error {
 func (vm *VM) handleImport(v *VM, instr *Instruction) error {
 	// Handle import instruction
 	// Pop the module name from the stack
-	if len(v.stack) < 1 {
+	if v.stack.Size() < 1 {
 		return &VmError{
 			Type:    ErrorTypeStackUnderflow,
 			Message: "expected 1 value for IMPORT",

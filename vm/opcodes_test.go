@@ -15,8 +15,8 @@ func TestNewVM(t *testing.T) {
 		t.Error("Expected non-nil stack")
 	}
 
-	if len(vm.stack) != 0 {
-		t.Errorf("Expected empty stack, got length %d", len(vm.stack))
+	if vm.stack.Size() != 0 {
+		t.Errorf("Expected empty stack, got length %d", vm.stack.Size())
 	}
 
 	if vm.globals == nil {
@@ -69,8 +69,8 @@ func TestPushAndPop(t *testing.T) {
 
 	// Test Push
 	vm.Push(42)
-	if len(vm.stack) != 1 {
-		t.Errorf("Expected stack length 1, got %d", len(vm.stack))
+	if vm.stack.Size() != 1 {
+		t.Errorf("Expected stack length 1, got %d", vm.stack.Size())
 	}
 
 	// Test Pop
@@ -79,8 +79,8 @@ func TestPushAndPop(t *testing.T) {
 		t.Errorf("Expected popped value 42, got %v", value)
 	}
 
-	if len(vm.stack) != 0 {
-		t.Errorf("Expected empty stack after pop, got length %d", len(vm.stack))
+	if vm.stack.Size() != 0 {
+		t.Errorf("Expected empty stack after pop, got length %d", vm.stack.Size())
 	}
 
 	// Test Pop on empty stack
@@ -109,8 +109,8 @@ func TestPeek(t *testing.T) {
 	}
 
 	// Stack should still have 2 elements
-	if len(vm.stack) != 2 {
-		t.Errorf("Expected stack length 2 after peek, got %d", len(vm.stack))
+	if vm.stack.Size() != 2 {
+		t.Errorf("Expected stack length 2 after peek, got %d", vm.stack.Size())
 	}
 }
 
@@ -205,8 +205,8 @@ func TestInstructions(t *testing.T) {
 		t.Errorf("Expected 0 instructions after clear, got %d", len(vm.instructions))
 	}
 
-	if len(vm.stack) != 0 {
-		t.Errorf("Expected empty stack after clear, got length %d", len(vm.stack))
+	if vm.stack.Size() != 0 {
+		t.Errorf("Expected empty stack after clear, got length %d", vm.stack.Size())
 	}
 
 	if vm.ip != 0 {
