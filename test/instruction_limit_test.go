@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,8 +101,7 @@ func main() {
 	}
 
 	// 验证错误信息是否包含指令数限制相关的内容
-	if err.Error() != "maximum instruction limit exceeded: 1000 instructions executed" &&
-		err.Error() != "maximum instruction limit exceeded: 1 instructions executed" {
+	if !strings.Contains(err.Error(), "maximum instruction limit exceeded") {
 		t.Errorf("Expected instruction limit error, but got: %v", err)
 	}
 

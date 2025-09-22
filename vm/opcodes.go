@@ -164,6 +164,9 @@ type VM struct {
 
 	// Module manager interface for on-demand module function access
 	moduleManager ModuleManagerInterface
+
+	// Opcode handlers dispatch table
+	handlers map[OpCode]OpHandler
 }
 
 // ScriptFunction represents a script-defined function
@@ -185,7 +188,7 @@ func NewVM() *VM {
 	typeSystem["string"] = types.StringType.Clone()
 	typeSystem["bool"] = types.BoolType.Clone()
 
-	return &VM{
+	vm := &VM{
 		stack:            make([]interface{}, 0),
 		globals:          make(map[string]interface{}),
 		locals:           make(map[string]interface{}),
@@ -198,7 +201,13 @@ func NewVM() *VM {
 		executionCount:   0,
 		maxInstructions:  1000000, // 默认最大指令数限制为100万条指令
 		moduleManager:    nil,     // 初始化为空
+		handlers:         make(map[OpCode]OpHandler),
 	}
+
+	// Register all opcode handlers
+	vm.registerHandlers()
+
+	return vm
 }
 
 // RegisterFunction registers a function in the VM
@@ -348,7 +357,7 @@ func getFieldFromStruct(objMap map[string]interface{}, fieldName string) interfa
 	return nil
 }
 
-// Execute executes the instructions
+// Execute executes the instructions using opcode dispatch table
 func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
 	vm.ip = 0
 	vm.executionCount = 0
@@ -364,6 +373,7 @@ func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
 			return nil, ctx.Err()
 		default:
 		}
+
 		instr := vm.instructions[vm.ip]
 
 		// Debug output
@@ -371,481 +381,13 @@ func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
 			fmt.Printf("IP: %d, Instruction: %s, Stack: %v\n", vm.ip, instr.String(), vm.stack)
 		}
 
-		switch instr.Op {
-		case OpNop:
-			// Do nothing
-		case OpLoadConst:
-			vm.Push(instr.Arg)
-		case OpLoadName:
-			name := instr.Arg.(string)
-			if value, ok := vm.GetLocal(name); ok {
-				vm.Push(value)
-			} else if value, ok := vm.GetGlobal(name); ok {
-				vm.Push(value)
-			} else {
-				return nil, fmt.Errorf("undefined variable: %s", name)
-			}
-		case OpStoreName:
-			name := instr.Arg.(string)
-			if len(vm.stack) == 0 {
-				return nil, fmt.Errorf("stack underflow in STORE_NAME")
-			}
-			value := vm.Pop()
-			vm.SetLocal(name, value)
-		case OpPop:
-			if len(vm.stack) == 0 {
-				return nil, fmt.Errorf("stack underflow in POP")
-			}
-			vm.Pop()
-		case OpCall:
-			// Function call using unified function registry
-			fnName := instr.Arg.(string)
-			argCount := instr.Arg2.(int)
-
-			// Check if we have enough arguments on the stack
-			if len(vm.stack) < argCount {
-				return nil, fmt.Errorf("stack underflow in CALL: expected %d arguments, got %d", argCount, len(vm.stack))
-			}
-
-			// Pop arguments from stack (in reverse order to maintain correct parameter order)
-			args := make([]interface{}, argCount)
-			for i := argCount - 1; i >= 0; i-- {
-				args[i] = vm.Pop()
-			}
-
-			// Check if it's a module function call (format: moduleName.functionName)
-			// Module functions should already be registered in the function registry
-			// For script-defined functions, check if the receiver parameter needs to be handled specially
-			if scriptFunc, exists := vm.scriptFunctions[fnName]; exists {
-				// Handle receiver parameter based on receiver type
-				if scriptFunc.ReceiverType == "value" && len(args) > 0 {
-					// If it's a map (struct) and the receiver type is "value", create a copy
-					if objMap, ok := args[0].(map[string]interface{}); ok {
-						args[0] = deepCopyMap(objMap)
-					}
-				}
-				// For pointer receivers, we pass the struct as-is (no copy needed)
-			}
-
-			// Execute function from registry
-			result, err := vm.executeFunction(fnName, args...)
-			if err != nil {
+		// Use dispatch table instead of switch-case
+		if handler, exists := vm.handlers[instr.Op]; exists {
+			if err := handler(vm, instr); err != nil {
 				return nil, err
 			}
-
-			vm.Push(result)
-		case OpCallMethod:
-			// Method call for struct methods
-			fnName := instr.Arg.(string)
-			argCount := instr.Arg2.(int)
-
-			// Check if we have enough arguments on the stack
-			if len(vm.stack) < argCount {
-				return nil, fmt.Errorf("stack underflow in CALL_METHOD: expected %d arguments, got %d", argCount, len(vm.stack))
-			}
-
-			// Pop arguments from stack (in reverse order to maintain correct parameter order)
-			args := make([]interface{}, argCount)
-			for i := argCount - 1; i >= 0; i-- {
-				args[i] = vm.Pop()
-			}
-
-			// Store the original receiver for pointer receiver methods
-			var originalReceiver interface{}
-			if scriptFunc, exists := vm.scriptFunctions[fnName]; exists && scriptFunc.ReceiverType == "pointer" && len(args) > 0 {
-				originalReceiver = args[0]
-			}
-
-			// For script-defined methods, check if the receiver parameter needs to be handled specially
-			if scriptFunc, exists := vm.scriptFunctions[fnName]; exists {
-				// Handle receiver parameter based on receiver type
-				if scriptFunc.ReceiverType == "value" && len(args) > 0 {
-					// If it's a map (struct) and the receiver type is "value", create a copy
-					if objMap, ok := args[0].(map[string]interface{}); ok {
-						args[0] = deepCopyMap(objMap)
-					}
-				}
-				// For pointer receivers, we pass the struct as-is (no copy needed)
-			}
-
-			// Execute function from registry
-			result, err := vm.executeFunction(fnName, args...)
-			if err != nil {
-				return nil, err
-			}
-
-			// For method calls, handle the return value based on receiver type
-			if scriptFunc, exists := vm.scriptFunctions[fnName]; exists {
-				if scriptFunc.ReceiverType == "pointer" {
-					// For pointer receiver methods, push the modified receiver back onto the stack
-					if originalReceiver != nil {
-						vm.Push(originalReceiver)
-					} else {
-						vm.Push(result)
-					}
-				} else {
-					// For value receiver methods, push the result
-					vm.Push(result)
-				}
-			} else {
-				// For regular functions, push the result
-				vm.Push(result)
-			}
-		case OpRegistFunction:
-			// Register a script-defined function
-			fnName := instr.Arg.(string)
-			funcInfo := instr.Arg2.(*ScriptFunction)
-			vm.scriptFunctions[fnName] = funcInfo
-			fmt.Printf("Registered function: %s with %d params\n", fnName, funcInfo.ParamCount)
-		case OpReturn:
-			if len(vm.stack) == 0 {
-				return nil, fmt.Errorf("stack underflow in RETURN")
-			}
-			vm.retval = vm.Pop()
-			fmt.Printf("Return value: %v\n", vm.retval)
-			return vm.retval, nil
-		case OpJump:
-			target := instr.Arg.(int)
-			if target < 0 || target >= len(vm.instructions) {
-				return nil, fmt.Errorf("invalid jump target: %d", target)
-			}
-			vm.ip = target
-			// 不在这里增加 executionCount，而是在循环末尾统一增加
-			continue
-		case OpJumpIf:
-			if len(vm.stack) == 0 {
-				return nil, fmt.Errorf("stack underflow in JUMP_IF")
-			}
-			condition := vm.Pop()
-			// Jump if condition is FALSE (negate the condition)
-			if !isTruthy(condition) {
-				target := instr.Arg.(int)
-				if target < 0 || target >= len(vm.instructions) {
-					return nil, fmt.Errorf("invalid jump target: %d", target)
-				}
-				vm.ip = target
-				// 不在这里增加 executionCount，而是在循环末尾统一增加
-				continue
-			}
-		case OpBinaryOp:
-			if len(vm.stack) < 2 {
-				return nil, fmt.Errorf("stack underflow in BINARY_OP: expected 2 values, got %d", len(vm.stack))
-			}
-			right := vm.Pop()
-			left := vm.Pop()
-
-			result, err := vm.executeBinaryOp(instr.Arg.(BinaryOp), left, right)
-			if err != nil {
-				return nil, err
-			}
-
-			vm.Push(result)
-		case OpUnaryOp:
-			if len(vm.stack) < 1 {
-				return nil, fmt.Errorf("stack underflow in UNARY_OP: expected 1 value, got %d", len(vm.stack))
-			}
-			value := vm.Pop()
-
-			result, err := vm.executeUnaryOp(instr.Arg.(UnaryOp), value)
-			if err != nil {
-				return nil, err
-			}
-
-			vm.Push(result)
-		case OpNewStruct:
-			// Create a new struct instance based on type definition
-			var structInstance map[string]interface{}
-
-			// If a type name is provided, try to create a struct with default values
-			if typeName, ok := instr.Arg.(string); ok && typeName != "" {
-				if structType, exists := vm.typeSystem[typeName]; exists {
-					// Create a struct with default values
-					if structTypeDef, ok := structType.(*types.StructType); ok {
-						structInstance = make(map[string]interface{})
-						// Initialize with default values
-						for fieldName, fieldType := range structTypeDef.GetFields() {
-							structInstance[fieldName] = fieldType.DefaultValue()
-						}
-					} else {
-						// Fallback to empty map
-						structInstance = make(map[string]interface{})
-					}
-				} else {
-					// Type not found, create empty map
-					structInstance = make(map[string]interface{})
-				}
-			} else {
-				// No type specified, create empty map
-				structInstance = make(map[string]interface{})
-			}
-
-			vm.Push(structInstance)
-		case OpNewSlice:
-			// Create a new slice
-			// Arg should be the number of elements
-			elementCount, ok := instr.Arg.(int)
-			if !ok {
-				elementCount = 0
-			}
-
-			// Check if we have enough elements on the stack
-			if len(vm.stack) < elementCount {
-				return nil, fmt.Errorf("stack underflow in NEW_SLICE: expected %d elements, got %d", elementCount, len(vm.stack))
-			}
-
-			// Create a slice with the elements
-			slice := make([]interface{}, elementCount)
-			// Pop elements from stack in reverse order to maintain correct order
-			for i := elementCount - 1; i >= 0; i-- {
-				slice[i] = vm.Pop()
-			}
-
-			vm.Push(slice)
-		case OpGetField:
-			if len(vm.stack) < 2 {
-				return nil, fmt.Errorf("stack underflow in GET_FIELD: expected 2 values, got %d", len(vm.stack))
-			}
-			fieldName := vm.Pop()
-			obj := vm.Pop()
-
-			// Convert fieldName to string if it's not already
-			var fieldNameStr string
-			if s, ok := fieldName.(string); ok {
-				fieldNameStr = s
-			} else {
-				fieldNameStr = fmt.Sprintf("%v", fieldName)
-			}
-
-			// For now, we assume obj is a map
-			if objMap, ok := obj.(map[string]interface{}); ok {
-				// Try to find the field, including in embedded structs
-				field := getFieldFromStruct(objMap, fieldNameStr)
-				vm.Push(field)
-			} else {
-				// If obj is not a map, return nil
-				vm.Push(nil)
-			}
-		case OpSetField:
-			// Debug output
-			if vm.debug {
-				fmt.Printf("About to execute SET_FIELD, Stack size: %d, Stack: %v\n", len(vm.stack), vm.stack)
-			}
-
-			if len(vm.stack) < 3 {
-				return nil, fmt.Errorf("stack underflow in SET_FIELD: expected 3 values, got %d", len(vm.stack))
-			}
-			// Pop in reverse order to get the correct values
-			// Stack order should be: [object, fieldName, value]
-			value := vm.Pop()
-			fieldName := vm.Pop()
-			obj := vm.Pop()
-
-			// Convert fieldName to string if it's not already
-			var fieldNameStr string
-			if s, ok := fieldName.(string); ok {
-				fieldNameStr = s
-			} else {
-				fieldNameStr = fmt.Sprintf("%v", fieldName)
-			}
-
-			// For now, we assume obj is a map
-			if objMap, ok := obj.(map[string]interface{}); ok {
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Setting field '%s' to '%v' in object: %v\n", fieldNameStr, value, objMap)
-				}
-				objMap[fieldNameStr] = value
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Object after setting field: %v\n", objMap)
-				}
-				// Push the modified object back onto the stack
-				vm.Push(objMap)
-			} else {
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Object is not a map, type: %T, value: %v, pushing back unchanged\n", obj, obj)
-				}
-				// If obj is not a map, push it back unchanged
-				vm.Push(obj)
-			}
-		case OpSetStructField:
-			// Debug output
-			if vm.debug {
-				fmt.Printf("About to execute SET_STRUCT_FIELD, Stack size: %d, Stack: %v\n", len(vm.stack), vm.stack)
-			}
-
-			if len(vm.stack) < 3 {
-				return nil, fmt.Errorf("stack underflow in SET_STRUCT_FIELD: expected 3 values, got %d", len(vm.stack))
-			}
-			// Pop in reverse order to get the correct values
-			// Stack order should be: [object, fieldName, value]
-			value := vm.Pop()
-			fieldName := vm.Pop()
-			obj := vm.Pop()
-
-			// Convert fieldName to string if it's not already
-			var fieldNameStr string
-			if s, ok := fieldName.(string); ok {
-				fieldNameStr = s
-			} else {
-				fieldNameStr = fmt.Sprintf("%v", fieldName)
-			}
-
-			// For now, we assume obj is a map
-			if objMap, ok := obj.(map[string]interface{}); ok {
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Setting struct field '%s' to '%v' in object: %v\n", fieldNameStr, value, objMap)
-				}
-				objMap[fieldNameStr] = value
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Object after setting struct field: %v\n", objMap)
-				}
-				// Push the modified object back onto the stack
-				vm.Push(objMap)
-			} else {
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Object is not a map, type: %T, value: %v, pushing back unchanged\n", obj, obj)
-				}
-				// If obj is not a map, push it back unchanged
-				vm.Push(obj)
-			}
-		case OpGetIndex:
-			if len(vm.stack) < 2 {
-				return nil, fmt.Errorf("stack underflow in GET_INDEX: expected 2 values, got %d", len(vm.stack))
-			}
-			index := vm.Pop()
-			array := vm.Pop()
-
-			// Convert index to int if it's not already
-			var indexInt int
-			if i, ok := index.(int); ok {
-				indexInt = i
-			} else {
-				return nil, fmt.Errorf("index must be an integer, got %T", index)
-			}
-
-			// For now, we assume array is a slice of interface{}
-			if arraySlice, ok := array.([]interface{}); ok {
-				if indexInt >= 0 && indexInt < len(arraySlice) {
-					vm.Push(arraySlice[indexInt])
-				} else {
-					vm.Push(nil)
-				}
-			} else {
-				// If array is not a slice, return nil
-				vm.Push(nil)
-			}
-		case OpSetIndex:
-			if len(vm.stack) < 3 {
-				return nil, fmt.Errorf("stack underflow in SET_INDEX: expected 3 values, got %d", len(vm.stack))
-			}
-			value := vm.Pop()
-			index := vm.Pop()
-			array := vm.Pop()
-
-			// Convert index to int if it's not already
-			var indexInt int
-			if i, ok := index.(int); ok {
-				indexInt = i
-			} else {
-				return nil, fmt.Errorf("index must be an integer, got %T", index)
-			}
-
-			// For now, we assume array is a slice of interface{}
-			if arraySlice, ok := array.([]interface{}); ok {
-				if indexInt >= 0 && indexInt < len(arraySlice) {
-					arraySlice[indexInt] = value
-					// Push the modified array back onto the stack
-					vm.Push(arraySlice)
-				} else {
-					// Index out of bounds, push the array back unchanged
-					vm.Push(arraySlice)
-				}
-			} else {
-				// If array is not a slice, push it back unchanged
-				vm.Push(array)
-			}
-		case OpRotate:
-			if len(vm.stack) < 3 {
-				return nil, fmt.Errorf("stack underflow in ROTATE: expected 3 values, got %d", len(vm.stack))
-			}
-			// Rotate the top three elements: [a, b, c] -> [b, c, a]
-			top := vm.stack[len(vm.stack)-1]
-			second := vm.stack[len(vm.stack)-2]
-			third := vm.stack[len(vm.stack)-3]
-			vm.stack[len(vm.stack)-1] = third
-			vm.stack[len(vm.stack)-2] = top
-			vm.stack[len(vm.stack)-3] = second
-		case OpLen:
-			if len(vm.stack) < 1 {
-				return nil, fmt.Errorf("stack underflow in LEN: expected 1 value, got %d", len(vm.stack))
-			}
-			value := vm.Pop()
-
-			// Get the length of the value if it's a slice or array
-			switch v := value.(type) {
-			case []interface{}:
-				vm.Push(len(v))
-			default:
-				// For other types, return 0
-				vm.Push(0)
-			}
-		case OpGetElement:
-			if len(vm.stack) < 2 {
-				return nil, fmt.Errorf("stack underflow in GET_ELEMENT: expected 2 values, got %d", len(vm.stack))
-			}
-			index := vm.Pop()
-			array := vm.Pop()
-
-			// Convert index to int if it's not already
-			var indexInt int
-			if i, ok := index.(int); ok {
-				indexInt = i
-			} else {
-				return nil, fmt.Errorf("index must be an integer, got %T", index)
-			}
-
-			// Get the element at the index if array is a slice
-			if arraySlice, ok := array.([]interface{}); ok {
-				if indexInt >= 0 && indexInt < len(arraySlice) {
-					vm.Push(arraySlice[indexInt])
-				} else {
-					vm.Push(nil)
-				}
-			} else {
-				vm.Push(nil)
-			}
-		case OpImport:
-			// Handle import instruction
-			// Pop the module name from the stack
-			if len(vm.stack) < 1 {
-				return nil, fmt.Errorf("stack underflow in IMPORT: expected 1 value, got %d", len(vm.stack))
-			}
-			modulePath := vm.Pop()
-
-			// Convert module path to string
-			var modulePathStr string
-			if s, ok := modulePath.(string); ok {
-				modulePathStr = s
-			} else {
-				modulePathStr = fmt.Sprintf("%v", modulePath)
-			}
-
-			// Extract module name from path (last part)
-			parts := strings.Split(modulePathStr, "/")
-			moduleName := parts[len(parts)-1]
-
-			// Store the module name as a global variable so it can be referenced
-			vm.SetGlobal(moduleName, moduleName)
-
-			// Debug output
-			if vm.debug {
-				fmt.Printf("IMPORT: Imported module %s\n", moduleName)
-			}
+		} else {
+			return nil, fmt.Errorf("unknown opcode: %v at IP %d", instr.Op, vm.ip)
 		}
 
 		vm.ip++
