@@ -70,6 +70,9 @@ const (
 	// Changes [a, b, c] to [b, c, a]
 	OpRotate
 
+	// Swap the top two elements on the stack
+	OpSwap
+
 	// Create a new slice
 	OpNewSlice
 
@@ -81,6 +84,15 @@ const (
 
 	// Import a module
 	OpImport
+
+	// Enter a scope with a specific key
+	OpEnterScopeWithKey
+
+	// Exit a scope with a specific key
+	OpExitScopeWithKey
+
+	// Create a new variable
+	OpCreateVar
 )
 
 // String returns the string representation of an OpCode
@@ -134,6 +146,12 @@ func (op OpCode) String() string {
 		return "OpGetElement"
 	case OpImport:
 		return "OpImport"
+	case OpEnterScopeWithKey:
+		return "OpEnterScopeWithKey"
+	case OpExitScopeWithKey:
+		return "OpExitScopeWithKey"
+	case OpCreateVar:
+		return "OpCreateVar"
 	default:
 		return fmt.Sprintf("OpCode(%d)", op)
 	}
@@ -238,6 +256,12 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("GET_ELEMENT %v", i.Arg)
 	case OpImport:
 		return fmt.Sprintf("IMPORT %v", i.Arg)
+	case OpEnterScopeWithKey:
+		return fmt.Sprintf("ENTER_SCOPE_WITH_KEY %v", i.Arg)
+	case OpExitScopeWithKey:
+		return fmt.Sprintf("EXIT_SCOPE_WITH_KEY %v", i.Arg)
+	case OpCreateVar:
+		return fmt.Sprintf("CREATE_VAR %v", i.Arg)
 	default:
 		return fmt.Sprintf("UNKNOWN(%d) %v %v", i.Op, i.Arg, i.Arg2)
 	}

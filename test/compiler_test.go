@@ -96,6 +96,9 @@ func TestCompilerNestedLoop(t *testing.T) {
 	}
 	`))
 
+	// Enable debug mode to see instructions
+	script.SetDebug(true)
+
 	result, err := script.Run()
 	if err != nil {
 		t.Fatalf("Failed to run script: %v", err)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/lengzhao/goscript/instruction"
 	"github.com/lengzhao/goscript/types"
 )
 
@@ -45,6 +46,8 @@ func (vm *VM) registerHandlers() {
 	vm.handlers[OpLoadName] = vm.handleLoadName
 	vm.handlers[OpStoreName] = vm.handleStoreName
 	vm.handlers[OpPop] = vm.handlePop
+	vm.handlers[OpSwap] = vm.handleSwap
+	vm.handlers[instruction.OpCreateVar] = vm.handleCreateVar
 
 	// Control flow
 	vm.handlers[OpCall] = vm.handleCall
@@ -70,6 +73,10 @@ func (vm *VM) registerHandlers() {
 	vm.handlers[OpLen] = vm.handleLen
 	vm.handlers[OpGetElement] = vm.handleGetElement
 	vm.handlers[OpImport] = vm.handleImport
+
+	// Context-based scope management (new)
+	vm.handlers[instruction.OpEnterScopeWithKey] = vm.handleEnterScopeWithKey
+	vm.handlers[instruction.OpExitScopeWithKey] = vm.handleExitScopeWithKey
 }
 
 // Basic operation handlers
@@ -84,6 +91,7 @@ func (vm *VM) handleLoadConst(v *VM, instr *Instruction) error {
 	return nil
 }
 
+// handleLoadName handles loading a variable by name from the context hierarchy
 func (vm *VM) handleLoadName(v *VM, instr *Instruction) error {
 	name, ok := instr.Arg.(string)
 	if !ok {
@@ -95,21 +103,23 @@ func (vm *VM) handleLoadName(v *VM, instr *Instruction) error {
 		}
 	}
 
-	if value, ok := v.GetLocal(name); ok {
-		v.Push(value)
-	} else if value, ok := v.GetGlobal(name); ok {
-		v.Push(value)
-	} else {
-		return &VmError{
-			Type:    ErrorTypeUndefinedVariable,
-			Message: fmt.Sprintf("undefined variable: %s", name),
-			IP:      v.ip,
-			OpCode:  OpLoadName,
+	// First try to get from context-based approach (new)
+	if v.currentCtx != nil {
+		if value, exists := v.currentCtx.GetVariable(name); exists {
+			v.Push(value)
+			return nil
 		}
 	}
-	return nil
+
+	return &VmError{
+		Type:    ErrorTypeUndefinedVariable,
+		Message: fmt.Sprintf("undefined variable: %s", name),
+		IP:      v.ip,
+		OpCode:  OpLoadName,
+	}
 }
 
+// handleStoreName handles storing a value to a variable by name in the current context
 func (vm *VM) handleStoreName(v *VM, instr *Instruction) error {
 	name, ok := instr.Arg.(string)
 	if !ok {
@@ -131,8 +141,20 @@ func (vm *VM) handleStoreName(v *VM, instr *Instruction) error {
 	}
 
 	value := v.Pop()
-	v.SetLocal(name, value)
-	return nil
+
+	// Use context-based approach (new) if available
+	if v.currentCtx != nil {
+		v.currentCtx.SetVariable(name, value)
+		return nil // Return nil on success
+	}
+
+	// If no context is available, return an error
+	return &VmError{
+		Type:    ErrorTypeUndefinedVariable,
+		Message: "no context available",
+		IP:      v.ip,
+		OpCode:  OpStoreName,
+	}
 }
 
 func (vm *VM) handlePop(v *VM, instr *Instruction) error {
@@ -148,8 +170,51 @@ func (vm *VM) handlePop(v *VM, instr *Instruction) error {
 	return nil
 }
 
+// handleSwap swaps the top two elements of the stack
+func (vm *VM) handleSwap(v *VM, instr *Instruction) error {
+	if v.stack.Size() < 2 {
+		return &VmError{
+			Type:    ErrorTypeStackUnderflow,
+			Message: "expected 2 values for SWAP",
+			IP:      v.ip,
+			OpCode:  OpSwap,
+		}
+	}
+
+	return v.stack.Swap()
+}
+
+// handleCreateVar handles creating a new variable in the current context
+func (vm *VM) handleCreateVar(v *VM, instr *Instruction) error {
+	name, ok := instr.Arg.(string)
+	if !ok {
+		return &VmError{
+			Type:    ErrorTypeTypeMismatch,
+			Message: "OpCreateVar requires string variable name",
+			IP:      v.ip,
+			OpCode:  instruction.OpCreateVar,
+		}
+	}
+
+	// Create the variable in the current context with a nil value
+	if v.currentCtx != nil {
+		v.currentCtx.SetVariableWithType(name, nil, "unknown")
+	} else {
+		// If no context is available, return an error
+		return &VmError{
+			Type:    ErrorTypeUndefinedVariable,
+			Message: "no context available to create variable",
+			IP:      v.ip,
+			OpCode:  instruction.OpCreateVar,
+		}
+	}
+
+	return nil
+}
+
 // Control flow handlers
 
+// handleCall handles function calls
 func (vm *VM) handleCall(v *VM, instr *Instruction) error {
 	fnName, ok := instr.Arg.(string)
 	if !ok {
@@ -277,10 +342,21 @@ func (vm *VM) handleCallMethod(v *VM, instr *Instruction) error {
 	// For method calls, handle the return value based on receiver type
 	if scriptFunc, exists := v.scriptFunctions[fnName]; exists {
 		if scriptFunc.ReceiverType == "pointer" {
-			// For pointer receiver methods, push the modified receiver back onto the stack
-			if originalReceiver != nil {
+			// For pointer receiver methods, we need to update the original receiver
+			// with any modifications made during the method execution
+			if originalReceiver != nil && result != nil {
+				// If the method returned a modified receiver, use that
+				// Otherwise, the original receiver might have been modified in-place
+				if modifiedReceiver, ok := result.(map[string]interface{}); ok {
+					v.Push(modifiedReceiver)
+				} else {
+					v.Push(originalReceiver)
+				}
+			} else if originalReceiver != nil {
+				// Push the original receiver which may have been modified in-place
 				v.Push(originalReceiver)
 			} else {
+				// Push the result if no original receiver
 				v.Push(result)
 			}
 		} else {
@@ -853,11 +929,70 @@ func (vm *VM) handleImport(v *VM, instr *Instruction) error {
 	moduleName := parts[len(parts)-1]
 
 	// Store the module name as a global variable so it can be referenced
-	v.SetGlobal(moduleName, moduleName)
+	if v.currentCtx != nil {
+		// Create the module variable in the global context
+		v.currentCtx.SetVariableWithType(moduleName, moduleName, "module")
+	}
 
 	// Debug output
 	if v.debug {
 		fmt.Printf("IMPORT: Imported module %s\n", moduleName)
+	}
+
+	return nil
+}
+
+// handleEnterScopeWithKey handles entering a scope with a specific key
+func (vm *VM) handleEnterScopeWithKey(v *VM, instr *Instruction) error {
+	pathKey, ok := instr.Arg.(string)
+	if !ok {
+		return &VmError{
+			Type:    ErrorTypeTypeMismatch,
+			Message: "OpEnterScopeWithKey requires string path key",
+			IP:      v.ip,
+			OpCode:  instruction.OpEnterScopeWithKey,
+		}
+	}
+
+	// Enter the new scope
+	if v.currentCtx != nil {
+		v.EnterScope(pathKey)
+	} else {
+		// Fallback behavior if context not initialized
+		if v.debug {
+			fmt.Printf("Entering scope: %s (context not initialized)\n", pathKey)
+		}
+	}
+
+	return nil
+}
+
+// handleExitScopeWithKey handles exiting a scope with a specific key
+func (vm *VM) handleExitScopeWithKey(v *VM, instr *Instruction) error {
+	pathKey, ok := instr.Arg.(string)
+	if !ok {
+		return &VmError{
+			Type:    ErrorTypeTypeMismatch,
+			Message: "OpExitScopeWithKey requires string path key",
+			IP:      v.ip,
+			OpCode:  instruction.OpExitScopeWithKey,
+		}
+	}
+
+	// Exit the current scope
+	if v.currentCtx != nil {
+		currentPath := v.currentCtx.GetPathKey()
+		if currentPath != pathKey {
+			if v.debug {
+				fmt.Printf("Warning: Exiting scope %s but current scope is %s\n", pathKey, currentPath)
+			}
+		}
+		v.ExitScope()
+	} else {
+		// Fallback behavior if context not initialized
+		if v.debug {
+			fmt.Printf("Exiting scope: %s (context not initialized)\n", pathKey)
+		}
 	}
 
 	return nil

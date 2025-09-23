@@ -37,6 +37,8 @@ type ScopeManager struct {
 type Scope struct {
 	variables map[string]*Variable
 	parent    *Scope
+	types     map[string]types.IType         // 添加类型映射
+	methods   map[string]map[string]Function // 添加方法映射，格式为 typeName -> methodName -> Function
 }
 
 // Variable represents a variable in the scope
@@ -54,6 +56,8 @@ func NewScopeManager() *ScopeManager {
 	root := &Scope{
 		variables: make(map[string]*Variable),
 		parent:    nil,
+		types:     make(map[string]types.IType),
+		methods:   make(map[string]map[string]Function),
 	}
 
 	return &ScopeManager{
@@ -69,6 +73,8 @@ func NewScopeManagerWithTimeout(timeout time.Duration) *ScopeManager {
 	root := &Scope{
 		variables: make(map[string]*Variable),
 		parent:    nil,
+		types:     make(map[string]types.IType),
+		methods:   make(map[string]map[string]Function),
 	}
 
 	deadline := time.Now().Add(timeout)
@@ -92,6 +98,8 @@ func (sm *ScopeManager) NewScope() {
 	newScope := &Scope{
 		variables: make(map[string]*Variable),
 		parent:    sm.current,
+		types:     make(map[string]types.IType),
+		methods:   make(map[string]map[string]Function),
 	}
 
 	sm.current = newScope
@@ -379,4 +387,73 @@ func (sm *ScopeManager) DebugString() string {
 	result += "}"
 
 	return result
+}
+
+// SetType sets a type in the current scope
+func (sm *ScopeManager) SetType(name string, typ types.IType) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Set the type in current scope
+	sm.current.types[name] = typ
+
+	// Debug output
+	if sm.debug {
+		fmt.Printf("Set type in scope: %s = %v\n", name, typ)
+	}
+}
+
+// GetType gets a type, searching from current scope up to root
+func (sm *ScopeManager) GetType(name string) (types.IType, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	// Search from current scope up the chain
+	scope := sm.current
+	for scope != nil {
+		if typ, exists := scope.types[name]; exists {
+			return typ, true
+		}
+		scope = scope.parent
+	}
+
+	return nil, false
+}
+
+// RegisterMethod registers a method for a type in the current scope
+func (sm *ScopeManager) RegisterMethod(typeName, methodName string, fn Function) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Initialize the methods map for this type if it doesn't exist
+	if sm.current.methods[typeName] == nil {
+		sm.current.methods[typeName] = make(map[string]Function)
+	}
+
+	// Register the method
+	sm.current.methods[typeName][methodName] = fn
+
+	// Debug output
+	if sm.debug {
+		fmt.Printf("Registered method: %s.%s\n", typeName, methodName)
+	}
+}
+
+// GetMethod gets a method for a type, searching from current scope up to root
+func (sm *ScopeManager) GetMethod(typeName, methodName string) (Function, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	// Search from current scope up the chain
+	scope := sm.current
+	for scope != nil {
+		if typeMethods, exists := scope.methods[typeName]; exists {
+			if method, exists := typeMethods[methodName]; exists {
+				return method, true
+			}
+		}
+		scope = scope.parent
+	}
+
+	return nil, false
 }

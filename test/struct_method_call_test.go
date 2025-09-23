@@ -1,7 +1,6 @@
 package test
 
 import (
-	"context"
 	"testing"
 
 	"github.com/lengzhao/goscript/compiler"
@@ -82,8 +81,7 @@ func main() {
 	}
 
 	// Execute the compiled code
-	ctx := context.Background()
-	result, err := vmInstance.Execute(ctx)
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute script: %v", err)
 	}

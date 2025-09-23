@@ -132,10 +132,18 @@ func (s *Stack) Rotate(n int) error {
 	}
 
 	// Rotate the top n elements
+	// For [a, b, c] with n=3, we want [b, c, a]
+	// This means moving the first element to the end
 	start := s.size - n
+	topElement := s.data[start]
+
+	// Shift all elements one position to the left
 	for i := 0; i < n-1; i++ {
-		s.data[start+i], s.data[start+i+1] = s.data[start+i+1], s.data[start+i]
+		s.data[start+i] = s.data[start+i+1]
 	}
+
+	// Put the first element at the end
+	s.data[start+n-1] = topElement
 
 	return nil
 }

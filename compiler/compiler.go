@@ -310,15 +310,15 @@ func (c *Compiler) compileInterfaceType(name string, interfaceType *ast.Interfac
 					var params []types.IType
 					if methodType.Params != nil {
 						for _, param := range methodType.Params.List {
-							for _, _ = range param.Names {
-								// Get parameter type
-								paramTypeName := getTypeName(param.Type)
-								paramType, err := types.GetTypeByName(paramTypeName)
-								if err != nil {
-									// For now, we'll just print a warning and use a default type
-									fmt.Printf("Warning: Unknown parameter type %s, using interface{} as default\n", paramTypeName)
-									paramType = types.NewInterfaceType("")
-								}
+							// Get parameter type
+							paramTypeName := getTypeName(param.Type)
+							paramType, err := types.GetTypeByName(paramTypeName)
+							if err != nil {
+								// For now, we'll just print a warning and use a default type
+								fmt.Printf("Warning: Unknown parameter type %s, using interface{} as default\n", paramTypeName)
+								paramType = types.NewInterfaceType("")
+							}
+							for range param.Names {
 								params = append(params, paramType)
 							}
 						}
@@ -328,15 +328,15 @@ func (c *Compiler) compileInterfaceType(name string, interfaceType *ast.Interfac
 					var returns []types.IType
 					if methodType.Results != nil {
 						for _, result := range methodType.Results.List {
-							for _, _ = range result.Names {
-								// Get return type
-								returnTypeName := getTypeName(result.Type)
-								returnType, err := types.GetTypeByName(returnTypeName)
-								if err != nil {
-									// For now, we'll just print a warning and use a default type
-									fmt.Printf("Warning: Unknown return type %s, using interface{} as default\n", returnTypeName)
-									returnType = types.NewInterfaceType("")
-								}
+							// Get return type
+							returnTypeName := getTypeName(result.Type)
+							returnType, err := types.GetTypeByName(returnTypeName)
+							if err != nil {
+								// For now, we'll just print a warning and use a default type
+								fmt.Printf("Warning: Unknown return type %s, using interface{} as default\n", returnTypeName)
+								returnType = types.NewInterfaceType("")
+							}
+							for range result.Names {
 								returns = append(returns, returnType)
 							}
 						}
@@ -392,90 +392,12 @@ func getTypeName(expr ast.Expr) string {
 }
 
 // Helper function to get method names from an interface type
-func getInterfaceMethodNames(interfaceType *types.InterfaceType) []string {
+func getInterfaceMethodNames(_ *types.InterfaceType) []string {
 	methods := make([]string, 0)
 	// We can't directly access the methods map, so we'll return a placeholder
 	// In a real implementation, we would have a method to get method names
 	methods = append(methods, "[methods]")
 	return methods
-}
-
-// compileMethod compiles a method declaration
-func (c *Compiler) compileMethod(fn *ast.FuncDecl) error {
-	// Get method name
-	methodName := fn.Name.Name
-
-	// Get receiver type name to create a unique method name
-	var receiverTypeName string
-	var receiverType string // "value" or "pointer"
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		receiver := fn.Recv.List[0]
-		// Extract type name from receiver
-		switch t := receiver.Type.(type) {
-		case *ast.Ident:
-			receiverTypeName = t.Name
-			receiverType = "value"
-		case *ast.StarExpr:
-			if ident, ok := t.X.(*ast.Ident); ok {
-				receiverTypeName = ident.Name
-			}
-			receiverType = "pointer"
-		}
-	}
-
-	// Create unique method name
-	uniqueMethodName := methodName
-	if receiverTypeName != "" {
-		uniqueMethodName = receiverTypeName + "." + methodName
-	}
-
-	fmt.Printf("Compiling method: %s (unique name: %s, receiver type: %s)\n", methodName, uniqueMethodName, receiverType)
-
-	// Create function info
-	funcInfo := &FunctionInfo{
-		Name:         uniqueMethodName,
-		ParamNames:   make([]string, 0),
-		ReceiverType: receiverType,
-	}
-
-	// Add receiver as first parameter
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		receiver := fn.Recv.List[0]
-		if len(receiver.Names) > 0 {
-			// Add receiver name to parameter names
-			funcInfo.ParamNames = append(funcInfo.ParamNames, receiver.Names[0].Name)
-			funcInfo.ParamCount++
-		}
-	}
-
-	// Count parameters and collect parameter names
-	if fn.Type.Params != nil {
-		// Count all parameter names (handling multiple names per field)
-		for _, param := range fn.Type.Params.List {
-			for _, name := range param.Names {
-				funcInfo.ParamCount++
-				funcInfo.ParamNames = append(funcInfo.ParamNames, name.Name)
-			}
-		}
-	}
-
-	// Create ScriptFunction that will be registered at runtime
-	funcInfo.ScriptFunction = &vm.ScriptFunction{
-		Name:         uniqueMethodName,
-		ParamCount:   funcInfo.ParamCount,
-		ParamNames:   funcInfo.ParamNames,
-		ReceiverType: receiverType,
-	}
-
-	fmt.Printf("Registering script function: %s with receiver type: %s\n", uniqueMethodName, receiverType)
-
-	// Store function info
-	c.functionMap[uniqueMethodName] = funcInfo
-
-	// Generate OpRegistFunction instruction
-	c.emitInstruction(vm.NewInstruction(vm.OpRegistFunction, uniqueMethodName, funcInfo.ScriptFunction))
-
-	return nil
 }
 
 // compileFunctionRegistration generates OpRegistFunction instruction for a function
@@ -568,6 +490,7 @@ func (c *Compiler) compileFunctionBody(fn *ast.FuncDecl) error {
 	for i := len(funcInfo.ParamNames) - 1; i >= 0; i-- {
 		paramName := funcInfo.ParamNames[i]
 		// Pop parameter from stack and store as local variable
+		c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, paramName, nil))
 		c.emitInstruction(vm.NewInstruction(vm.OpStoreName, paramName, nil))
 	}
 
@@ -619,6 +542,8 @@ func (c *Compiler) compileStmt(stmt ast.Stmt) error {
 		return c.compileIncDecStmt(s)
 	case *ast.DeclStmt:
 		return c.compileDeclStmt(s)
+	case *ast.BlockStmt:
+		return c.compileBlockStmt(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -642,6 +567,9 @@ func (c *Compiler) compileDeclStmt(stmt *ast.DeclStmt) error {
 
 		// For each variable name in the spec
 		for i, name := range valueSpec.Names {
+			// Create the variable first
+			c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, name.Name, nil))
+
 			// If there's an initial value, compile and assign it
 			if i < len(valueSpec.Values) {
 				err := c.compileExpr(valueSpec.Values[i])
@@ -671,7 +599,8 @@ func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 		return err
 	}
 
-	// Store the slice in a temporary variable
+	// Create and store the slice in a temporary variable
+	c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, "_range_slice", nil))
 	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_slice", nil))
 
 	// Load the slice again
@@ -680,11 +609,13 @@ func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 	// Get the length of the slice
 	c.emitInstruction(vm.NewInstruction(vm.OpLen, nil, nil))
 
-	// Store the length in a temporary variable
+	// Create and store the length in a temporary variable
+	c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, "_range_length", nil))
 	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_length", nil))
 
 	// Initialize counter
 	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, 0, nil)) // counter = 0
+	c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, "_range_counter", nil))
 	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_counter", nil))
 
 	// Start of loop
@@ -703,10 +634,9 @@ func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 	// But skip if the key is the blank identifier "_"
 	if stmt.Key != nil {
 		if ident, ok := stmt.Key.(*ast.Ident); ok && ident.Name != "_" {
-			// Load the current counter value
+			// Create and store the current counter value in the key variable
+			c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, ident.Name, nil))
 			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
-
-			// Store it in the key variable
 			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, ident.Name, nil))
 		}
 	}
@@ -722,8 +652,9 @@ func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
 		// Get the element at the index
 		c.emitInstruction(vm.NewInstruction(vm.OpGetElement, nil, nil))
 
-		// Store it in the value variable
+		// Create and store it in the value variable
 		if ident, ok := stmt.Value.(*ast.Ident); ok {
+			c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, ident.Name, nil))
 			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, ident.Name, nil))
 		}
 	}
@@ -776,6 +707,10 @@ func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
 		// Handle the left-hand side
 		switch lhs := stmt.Lhs[0].(type) {
 		case *ast.Ident:
+			// For short variable declaration (:=), create the variable first
+			if stmt.Tok == token.DEFINE {
+				c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, lhs.Name, nil))
+			}
 			// Store the result in the variable
 			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
 

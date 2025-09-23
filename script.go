@@ -189,6 +189,7 @@ func (s *Script) Run() (interface{}, error) {
 
 // RunContext executes the script with a context
 func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
+	fmt.Println("RunContext: Starting execution")
 	startTime := time.Now()
 
 	// Use the global context
@@ -233,6 +234,8 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	// Generate bytecode based on source content
 	// This is a simplified compilation process for demonstration purposes
 	sourceStr := string(s.source)
+
+	fmt.Printf("RunContext: Source code:\n%s\n", sourceStr)
 
 	// Create a parser
 	parser := parser.New()
@@ -285,7 +288,9 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	}
 
 	// Execute the VM
-	result, err := s.vm.Execute(ctx)
+	fmt.Println("RunContext: Executing VM")
+	result, err := s.vm.Execute(nil)
+	fmt.Printf("RunContext: VM execution completed, result: %v, err: %v\n", result, err)
 
 	// Update execution statistics
 	s.executionStats.ExecutionTime = time.Since(startTime)

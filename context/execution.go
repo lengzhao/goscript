@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/lengzhao/goscript/types"
 )
 
 // ExecutionContext represents an execution context with scope management
@@ -301,4 +303,34 @@ func (ec *ExecutionContext) SetDebug(debug bool) {
 // GetScopeManager returns the scope manager
 func (ec *ExecutionContext) GetScopeManager() *ScopeManager {
 	return ec.ScopeManager
+}
+
+// SetType sets a type in the current scope
+func (ec *ExecutionContext) SetType(name string, typ types.IType) {
+	ec.ScopeManager.SetType(name, typ)
+
+	// Debug output
+	if ec.Debug {
+		fmt.Printf("Set type: %s = %v\n", name, typ)
+	}
+}
+
+// GetType gets a type from the scope chain
+func (ec *ExecutionContext) GetType(name string) (types.IType, bool) {
+	return ec.ScopeManager.GetType(name)
+}
+
+// RegisterMethod registers a method for a type in the current scope
+func (ec *ExecutionContext) RegisterMethod(typeName, methodName string, fn Function) {
+	ec.ScopeManager.RegisterMethod(typeName, methodName, fn)
+
+	// Debug output
+	if ec.Debug {
+		fmt.Printf("Registered method: %s.%s\n", typeName, methodName)
+	}
+}
+
+// GetMethod gets a method for a type from the scope chain
+func (ec *ExecutionContext) GetMethod(typeName, methodName string) (Function, bool) {
+	return ec.ScopeManager.GetMethod(typeName, methodName)
 }

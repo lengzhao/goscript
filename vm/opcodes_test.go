@@ -19,14 +19,6 @@ func TestNewVM(t *testing.T) {
 		t.Errorf("Expected empty stack, got length %d", vm.stack.Size())
 	}
 
-	if vm.globals == nil {
-		t.Error("Expected non-nil globals")
-	}
-
-	if vm.locals == nil {
-		t.Error("Expected non-nil locals")
-	}
-
 	if vm.instructions == nil {
 		t.Error("Expected non-nil instructions")
 	}
@@ -131,50 +123,6 @@ func TestStackSize(t *testing.T) {
 	vm.Pop()
 	if vm.StackSize() != 1 {
 		t.Errorf("Expected stack size 1, got %d", vm.StackSize())
-	}
-}
-
-func TestGlobalVariables(t *testing.T) {
-	vm := NewVM()
-
-	// Test SetGlobal and GetGlobal
-	vm.SetGlobal("testVar", 42)
-
-	value, exists := vm.GetGlobal("testVar")
-	if !exists {
-		t.Error("Expected testVar to exist")
-	}
-
-	if value != 42 {
-		t.Errorf("Expected global value 42, got %v", value)
-	}
-
-	// Test non-existent global
-	_, exists = vm.GetGlobal("nonExistent")
-	if exists {
-		t.Error("Expected nonExistent to not exist")
-	}
-}
-
-func TestLocalVariables(t *testing.T) {
-	vm := NewVM()
-
-	// Test SetLocal and GetLocal
-	vm.SetLocal("localVar", "test")
-
-	value, exists := vm.GetLocal("localVar")
-	if !exists {
-		t.Error("Expected localVar to exist")
-	}
-
-	if value != "test" {
-		t.Errorf("Expected local value 'test', got %v", value)
-	}
-
-	// Test non-existent local
-	_, exists = vm.GetLocal("nonExistent")
-	if exists {
-		t.Error("Expected nonExistent to not exist")
 	}
 }
 

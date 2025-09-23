@@ -143,6 +143,21 @@ type ExecutionContext struct {
 
 利用Go的`context`包实现自然的变量查找链，从当前作用域向上查找直到全局作用域。不同作用域之间的变量自然隔离，防止变量污染。
 
+### 4.4 基于Key的上下文管理（新设计）
+
+为了更好地管理作用域，引入了基于Key的上下文管理机制：
+
+1. **唯一标识符**：每个作用域都有唯一的key标识符
+   - 全局作用域：`main`
+   - 主函数：`main.main`
+   - 普通函数：`main.FunctionName`
+   - 结构体方法：`main.StructName.MethodName`
+   - 其他模块：`moduleName.FunctionName`
+
+2. **编译时跟踪**：编译器在编译BlockStmt时分析当前上下文的key，并生成相应的作用域管理指令
+
+3. **运行时管理**：运行时创建runCtx对象来管理变量和引用关系，每个runCtx引用其父级上下文
+
 ## 5. 虚拟机与操作码
 
 ### 5.1 简化后的操作码
@@ -159,6 +174,10 @@ const (
     OpJumpIf                  // 条件跳转
     OpBinaryOp                // 二元操作
     OpUnaryOp                 // 一元操作
+    OpEnterScope              // 进入作用域
+    OpExitScope               // 退出作用域
+    OpEnterScopeWithKey       // 进入指定key的作用域
+    OpExitScopeWithKey        // 退出指定key的作用域
 )
 ```
 

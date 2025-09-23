@@ -22,8 +22,9 @@ func TestScriptsInDataFolder(t *testing.T) {
 		t.Fatalf("Failed to read data directory: %v", err)
 	}
 
-	// runCase := "range_advanced.gs" // 运行所有测试用例
 	runCase := "" // Run all test cases
+	// runCase := "range_simple.gs" // Uncomment to run a specific test case
+
 	// Test each .gs file
 	for _, file := range files {
 		if runCase != "" && runCase != file.Name() {
@@ -62,10 +63,10 @@ func testScriptFile(t *testing.T, filePath string) {
 	// script.ImportModule(builtin.ListAllModules()...)
 
 	ctx := context.Background()
-	ctx1, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
+	// ctx1, cancel := context.WithTimeout(ctx, 2*time.Second)
+	// defer cancel()
 	// Run the script
-	result, err := script.RunContext(ctx1)
+	result, err := script.RunContext(ctx)
 	if err != nil {
 		t.Fatalf("Failed to run script %s: %v", filePath, err)
 	}

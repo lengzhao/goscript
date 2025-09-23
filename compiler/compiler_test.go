@@ -3,8 +3,6 @@ package compiler
 import (
 	"testing"
 
-	baseCtx "context"
-
 	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/parser"
 	"github.com/lengzhao/goscript/vm"
@@ -34,10 +32,10 @@ func main() {
 
 	// Create VM and context
 	vmInstance := vm.NewVM()
-	context := context.NewExecutionContext()
+	ctx := context.NewExecutionContext()
 
 	// Create compiler and compile
-	compiler := NewCompiler(vmInstance, context)
+	compiler := NewCompiler(vmInstance, ctx)
 	err = compiler.Compile(astFile)
 	if err != nil {
 		t.Fatalf("Failed to compile script: %v", err)
@@ -55,7 +53,7 @@ func main() {
 	}
 
 	// Execute the VM to register functions and run the script
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(context.NewContext("main", nil))
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -117,17 +115,17 @@ func main() {
 
 	// Create VM and context
 	vmInstance := vm.NewVM()
-	context := context.NewExecutionContext()
+	ctx := context.NewExecutionContext()
 
 	// Create compiler and compile
-	compiler := NewCompiler(vmInstance, context)
+	compiler := NewCompiler(vmInstance, ctx)
 	err = compiler.Compile(astFile)
 	if err != nil {
 		t.Fatalf("Failed to compile script: %v", err)
 	}
 
 	// Execute the VM to register functions and run the script
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -186,7 +184,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -237,7 +235,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -307,7 +305,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -379,7 +377,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -442,7 +440,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -496,7 +494,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -559,7 +557,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -626,7 +624,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -681,7 +679,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -745,7 +743,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -794,7 +792,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -847,7 +845,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -895,7 +893,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -943,7 +941,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -992,7 +990,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1039,7 +1037,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1085,7 +1083,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1133,7 +1131,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1195,7 +1193,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1249,7 +1247,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1296,7 +1294,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1351,7 +1349,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1400,7 +1398,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1448,7 +1446,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1494,7 +1492,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1545,7 +1543,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1600,7 +1598,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1651,7 +1649,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1718,7 +1716,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1787,7 +1785,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1838,7 +1836,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1904,7 +1902,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -1958,7 +1956,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -2018,7 +2016,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -2113,7 +2111,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -2166,7 +2164,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -2219,7 +2217,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -2268,7 +2266,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(baseCtx.Background())
+	result, err := vmInstance.Execute(nil)
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}

@@ -2,11 +2,11 @@
 package vm
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"strings"
 
+	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/instruction"
 	"github.com/lengzhao/goscript/types"
 )
@@ -76,6 +76,9 @@ const (
 	// Changes [a, b, c] to [b, c, a]
 	OpRotate = instruction.OpRotate
 
+	// Swap the top two elements on the stack
+	OpSwap = instruction.OpSwap
+
 	// Create a new slice
 	OpNewSlice = instruction.OpNewSlice
 
@@ -87,6 +90,15 @@ const (
 
 	// Import a module
 	OpImport = instruction.OpImport
+
+	// Enter a scope with a specific key
+	OpEnterScopeWithKey = instruction.OpEnterScopeWithKey
+
+	// Exit a scope with a specific key
+	OpExitScopeWithKey = instruction.OpExitScopeWithKey
+
+	// Create a new variable
+	OpCreateVar = instruction.OpCreateVar
 )
 
 // BinaryOp represents a binary operation
@@ -124,51 +136,6 @@ func NewInstruction(op OpCode, arg interface{}, arg2 ...interface{}) *Instructio
 	return instruction.NewInstruction(op, arg, arg2...)
 }
 
-// VM represents the virtual machine
-type VM struct {
-	// Optimized stack for expression evaluation
-	stack *Stack
-
-	// Global variables
-	globals map[string]interface{}
-
-	// Local variables
-	locals map[string]interface{}
-
-	// Instructions
-	instructions []*Instruction
-
-	// Instruction pointer
-	ip int
-
-	// Return value
-	retval interface{}
-
-	// Function registry (for unified function calling)
-	functionRegistry map[string]func(args ...interface{}) (interface{}, error)
-
-	// Script function definitions (name -> startIP, endIP, paramCount)
-	scriptFunctions map[string]*ScriptFunction
-
-	// Type system
-	typeSystem map[string]types.IType
-
-	// Debug mode
-	debug bool
-
-	// Execution statistics
-	executionCount int
-
-	// Maximum instruction limit to prevent infinite loops
-	maxInstructions int64
-
-	// Module manager interface for on-demand module function access
-	moduleManager ModuleManagerInterface
-
-	// Opcode handlers dispatch table
-	handlers map[OpCode]OpHandler
-}
-
 // ScriptFunction represents a script-defined function
 type ScriptFunction struct {
 	Name         string
@@ -188,10 +155,11 @@ func NewVM() *VM {
 	typeSystem["string"] = types.StringType.Clone()
 	typeSystem["bool"] = types.BoolType.Clone()
 
+	// Create global context for new approach
+	globalCtx := context.NewContext("global", nil)
+
 	vm := &VM{
 		stack:            NewStack(64, 10000), // 初始容量64，最大10000
-		globals:          make(map[string]interface{}),
-		locals:           make(map[string]interface{}),
 		instructions:     make([]*Instruction, 0),
 		ip:               0,
 		functionRegistry: make(map[string]func(args ...interface{}) (interface{}, error)),
@@ -202,6 +170,8 @@ func NewVM() *VM {
 		maxInstructions:  1000000, // 默认最大指令数限制为100万条指令
 		moduleManager:    nil,     // 初始化为空
 		handlers:         make(map[OpCode]OpHandler),
+		globalCtx:        globalCtx,
+		currentCtx:       globalCtx,
 	}
 
 	// Register all opcode handlers
@@ -265,34 +235,6 @@ func (vm *VM) StackSize() int {
 	return vm.stack.Size()
 }
 
-// SetGlobal sets a global variable
-func (vm *VM) SetGlobal(name string, value interface{}) {
-	vm.globals[name] = value
-}
-
-// GetGlobal gets a global variable
-func (vm *VM) GetGlobal(name string) (interface{}, bool) {
-	value, ok := vm.globals[name]
-	return value, ok
-}
-
-// SetLocal sets a local variable
-func (vm *VM) SetLocal(name string, value interface{}) {
-	if vm.locals == nil {
-		vm.locals = make(map[string]interface{})
-	}
-	vm.locals[name] = value
-}
-
-// GetLocal gets a local variable
-func (vm *VM) GetLocal(name string) (interface{}, bool) {
-	if vm.locals == nil {
-		return nil, false
-	}
-	value, ok := vm.locals[name]
-	return value, ok
-}
-
 // AddInstruction adds an instruction to the VM
 func (vm *VM) AddInstruction(instr *Instruction) {
 	vm.instructions = append(vm.instructions, instr)
@@ -306,7 +248,6 @@ func (vm *VM) GetInstructions() []*Instruction {
 // Clear clears the VM state
 func (vm *VM) Clear() {
 	vm.stack.Clear()
-	vm.locals = make(map[string]interface{})
 	vm.instructions = vm.instructions[:0]
 	vm.ip = 0
 	vm.retval = nil
@@ -361,46 +302,6 @@ func getFieldFromStruct(objMap map[string]interface{}, fieldName string) interfa
 	return nil
 }
 
-// Execute executes the instructions using opcode dispatch table
-func (vm *VM) Execute(ctx context.Context) (interface{}, error) {
-	vm.ip = 0
-	vm.executionCount = 0
-
-	for vm.ip < len(vm.instructions) {
-		// Check if maximum instruction limit is exceeded
-		if vm.maxInstructions > 0 && int64(vm.executionCount) >= vm.maxInstructions {
-			return nil, fmt.Errorf("maximum instruction limit exceeded: %d instructions executed", vm.executionCount)
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		instr := vm.instructions[vm.ip]
-
-		// Debug output
-		if vm.debug {
-			fmt.Printf("IP: %d, Instruction: %s, Stack: %v\n", vm.ip, instr.String(), vm.stack.GetSlice())
-		}
-
-		// Use dispatch table instead of switch-case
-		if handler, exists := vm.handlers[instr.Op]; exists {
-			if err := handler(vm, instr); err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, fmt.Errorf("unknown opcode: %v at IP %d", instr.Op, vm.ip)
-		}
-
-		vm.ip++
-		vm.executionCount++
-	}
-
-	return vm.retval, nil
-}
-
 // executeFunction executes a function from the registry
 func (vm *VM) executeFunction(name string, args ...interface{}) (interface{}, error) {
 	// Check if it's a script-defined function
@@ -442,471 +343,37 @@ func (vm *VM) executeScriptFunction(scriptFunc *ScriptFunction, args ...interfac
 		return nil, fmt.Errorf("function %s expects %d arguments, got %d", scriptFunc.Name, scriptFunc.ParamCount, len(args))
 	}
 
-	// Save current execution state
-	currentIP := vm.ip
-	currentLocals := vm.locals
-	currentExecutionCount := vm.executionCount // 保存当前执行计数
+	// Create a new context for this function execution with a unique path key
+	// Use the function name as the path key to ensure uniqueness
+	funcCtx := context.NewContext("function."+scriptFunc.Name, vm.currentCtx)
 
-	// Create new local scope for function execution
-	vm.locals = make(map[string]interface{})
-
-	// Set up function parameters as local variables
-	// For script-defined functions, we need to handle parameters correctly
-	// Push arguments in normal order (not reverse order) so that STORE_NAME instructions
-	// can pop them in the correct order
-	for i := 0; i < len(args); i++ {
-		// For value receivers, we need to create a copy of the struct
-		// For pointer receivers, we pass the struct as-is
-		if i == 0 && scriptFunc.ParamCount > 0 && scriptFunc.ReceiverType != "" {
-			// This is the receiver parameter for a method
-			// Handle receiver parameter based on receiver type
-			if objMap, ok := args[i].(map[string]interface{}); ok && scriptFunc.ReceiverType == "value" {
-				// Create a deep copy of the map for value receiver
-				copyMap := deepCopyMap(objMap)
-				vm.Push(copyMap)
-			} else if objMap, ok := args[i].(map[string]interface{}); ok && scriptFunc.ReceiverType == "pointer" {
-				// For pointer receivers, pass the original struct (no copy)
-				vm.Push(objMap)
-			} else {
-				vm.Push(args[i])
-			}
-		} else {
-			vm.Push(args[i])
-		}
+	// Add the new context as a child of the current context
+	if vm.currentCtx != nil {
+		vm.currentCtx.AddChild(funcCtx)
 	}
 
-	// Execute function instructions
-	startIP := scriptFunc.StartIP
-	endIP := scriptFunc.EndIP
+	// Set the new context as current context
+	vm.currentCtx = funcCtx
 
-	// Execute instructions in the function
-	for vm.ip = startIP; vm.ip < endIP && vm.ip < len(vm.instructions); vm.ip++ {
-		// Check if maximum instruction limit is exceeded
-		if vm.maxInstructions > 0 && int64(vm.executionCount) >= vm.maxInstructions {
-			// Restore execution state before returning error
-			vm.ip = currentIP
-			vm.locals = currentLocals
-			vm.executionCount = currentExecutionCount
-			return nil, fmt.Errorf("maximum instruction limit exceeded: %d instructions executed", vm.executionCount)
-		}
-
-		instr := vm.instructions[vm.ip]
-
-		// Debug output
-		if vm.debug {
-			fmt.Printf("Function IP: %d, Instruction: %s, Stack: %v\n", vm.ip, instr.String(), vm.stack)
-		}
-
-		switch instr.Op {
-		case OpNop:
-			// Do nothing
-		case OpLoadConst:
-			vm.Push(instr.Arg)
-		case OpLoadName:
-			name := instr.Arg.(string)
-			if value, ok := vm.GetLocal(name); ok {
-				vm.Push(value)
-			} else if value, ok := vm.GetGlobal(name); ok {
-				vm.Push(value)
-			} else {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("undefined variable: %s", name)
-			}
-		case OpStoreName:
-			name := instr.Arg.(string)
-			if vm.stack.Size() == 0 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in STORE_NAME")
-			}
-			value := vm.Pop()
-			vm.SetLocal(name, value)
-		case OpCall:
-			// Function call using unified function registry
-			fnName := instr.Arg.(string)
-			argCount := instr.Arg2.(int)
-
-			// Check if we have enough arguments on the stack
-			if vm.stack.Size() < argCount {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in CALL: expected %d arguments, got %d", argCount, vm.stack.Size())
-			}
-
-			// Pop arguments from stack (in reverse order to maintain correct parameter order)
-			callArgs := make([]interface{}, argCount)
-			for i := argCount - 1; i >= 0; i-- {
-				callArgs[i] = vm.Pop()
-			}
-
-			// For script-defined functions, check if the receiver parameter needs to be handled specially
-			if scriptFunc, exists := vm.scriptFunctions[fnName]; exists {
-				// Handle receiver parameter based on receiver type
-				if scriptFunc.ReceiverType == "value" && len(callArgs) > 0 {
-					// If it's a map (struct) and the receiver type is "value", create a copy
-					if objMap, ok := callArgs[0].(map[string]interface{}); ok {
-						callArgs[0] = deepCopyMap(objMap)
-					}
-				}
-				// For pointer receivers, we pass the struct as-is (no copy needed)
-			}
-
-			// Execute function from registry
-			result, err := vm.executeFunction(fnName, callArgs...)
-			if err != nil {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, err
-			}
-
-			vm.Push(result)
-		case OpReturn:
-			if vm.stack.Size() == 0 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in RETURN")
-			}
-			result := vm.Pop()
-
-			// For pointer receiver methods, we need to return the modified receiver
-			if scriptFunc.ReceiverType == "pointer" && len(args) > 0 {
-				// Return the modified receiver (first argument)
-				result = args[0]
-			}
-
-			// Restore execution state
-			vm.ip = currentIP
-			vm.locals = currentLocals
-
-			return result, nil
-		case OpJump:
-			target := instr.Arg.(int)
-			if target < 0 || target >= len(vm.instructions) {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("invalid jump target: %d", target)
-			}
-			vm.ip = target - 1 // -1 because we increment at the end of the loop
-		case OpJumpIf:
-			if vm.stack.Size() == 0 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in JUMP_IF")
-			}
-			condition := vm.Pop()
-			// Jump if condition is FALSE (negate the condition)
-			if !isTruthy(condition) {
-				target := instr.Arg.(int)
-				if target < 0 || target >= len(vm.instructions) {
-					// Restore execution state before returning error
-					vm.ip = currentIP
-					vm.locals = currentLocals
-					vm.executionCount = currentExecutionCount
-					return nil, fmt.Errorf("invalid jump target: %d", target)
-				}
-				vm.ip = target - 1 // -1 because we increment at the end of the loop
-			}
-		case OpBinaryOp:
-			if vm.stack.Size() < 2 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in BINARY_OP: expected 2 values, got %d", vm.stack.Size())
-			}
-			right := vm.Pop()
-			left := vm.Pop()
-
-			result, err := vm.executeBinaryOp(instr.Arg.(BinaryOp), left, right)
-			if err != nil {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, err
-			}
-
-			vm.Push(result)
-		case OpUnaryOp:
-			if vm.stack.Size() < 1 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in UNARY_OP: expected 1 value, got %d", vm.stack.Size())
-			}
-			value := vm.Pop()
-
-			result, err := vm.executeUnaryOp(instr.Arg.(UnaryOp), value)
-			if err != nil {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, err
-			}
-
-			vm.Push(result)
-		case OpNewStruct:
-			// Create a new struct instance based on type definition
-			var structInstance map[string]interface{}
-
-			// If a type name is provided, try to create a struct with default values
-			if typeName, ok := instr.Arg.(string); ok && typeName != "" {
-				if structType, exists := vm.typeSystem[typeName]; exists {
-					// Create a struct with default values
-					if structTypeDef, ok := structType.(*types.StructType); ok {
-						structInstance = make(map[string]interface{})
-						// Initialize with default values
-						for fieldName, fieldType := range structTypeDef.GetFields() {
-							structInstance[fieldName] = fieldType.DefaultValue()
-						}
-					} else {
-						// Fallback to empty map
-						structInstance = make(map[string]interface{})
-					}
-				} else {
-					// Type not found, create empty map
-					structInstance = make(map[string]interface{})
-				}
-			} else {
-				// No type specified, create empty map
-				structInstance = make(map[string]interface{})
-			}
-
-			vm.Push(structInstance)
-		case OpGetField:
-			if vm.stack.Size() < 2 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in GET_FIELD: expected 2 values, got %d", vm.stack.Size())
-			}
-			fieldName := vm.Pop()
-			obj := vm.Pop()
-
-			// Convert fieldName to string if it's not already
-			var fieldNameStr string
-			if s, ok := fieldName.(string); ok {
-				fieldNameStr = s
-			} else {
-				fieldNameStr = fmt.Sprintf("%v", fieldName)
-			}
-
-			// For now, we assume obj is a map
-			if objMap, ok := obj.(map[string]interface{}); ok {
-				// Try to find the field, including in embedded structs
-				field := getFieldFromStruct(objMap, fieldNameStr)
-				vm.Push(field)
-			} else {
-				// If obj is not a map, return nil
-				vm.Push(nil)
-			}
-		case OpSetField:
-			// Debug output
-			if vm.debug {
-				fmt.Printf("Function IP: %d, About to execute SET_FIELD, Stack size: %d, Stack: %v\n", vm.ip, vm.stack.Size(), vm.stack)
-			}
-
-			if vm.stack.Size() < 3 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in SET_FIELD: expected 3 values, got %d", vm.stack.Size())
-			}
-			fieldName := vm.Pop()
-			value := vm.Pop()
-			obj := vm.Pop()
-
-			// Convert fieldName to string if it's not already
-			var fieldNameStr string
-			if s, ok := fieldName.(string); ok {
-				fieldNameStr = s
-			} else {
-				fieldNameStr = fmt.Sprintf("%v", fieldName)
-			}
-
-			// For now, we assume obj is a map
-			if objMap, ok := obj.(map[string]interface{}); ok {
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Function IP: %d, Setting field '%s' to '%v' in object: %v\n", vm.ip, fieldNameStr, value, objMap)
-				}
-				objMap[fieldNameStr] = value
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Function IP: %d, Object after setting field: %v\n", vm.ip, objMap)
-				}
-				// Push the modified object back onto the stack
-				vm.Push(objMap)
-			} else {
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Function IP: %d, Object is not a map, type: %T, value: %v, pushing back unchanged\n", vm.ip, obj, obj)
-				}
-				// If obj is not a map, push it back unchanged
-				vm.Push(obj)
-			}
-		case OpSetStructField:
-			// Debug output
-			if vm.debug {
-				fmt.Printf("Function IP: %d, About to execute SET_STRUCT_FIELD, Stack size: %d, Stack: %v\n", vm.ip, vm.stack.Size(), vm.stack)
-			}
-
-			if vm.stack.Size() < 3 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in SET_STRUCT_FIELD: expected 3 values, got %d", vm.stack.Size())
-			}
-			// Pop in reverse order to get the correct values
-			// Stack order should be: [object, fieldName, value]
-			value := vm.Pop()
-			fieldName := vm.Pop()
-			obj := vm.Pop()
-
-			// Convert fieldName to string if it's not already
-			var fieldNameStr string
-			if s, ok := fieldName.(string); ok {
-				fieldNameStr = s
-			} else {
-				fieldNameStr = fmt.Sprintf("%v", fieldName)
-			}
-
-			// For now, we assume obj is a map
-			if objMap, ok := obj.(map[string]interface{}); ok {
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Function IP: %d, Setting struct field '%s' to '%v' in object: %v\n", vm.ip, fieldNameStr, value, objMap)
-				}
-				objMap[fieldNameStr] = value
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Function IP: %d, Object after setting struct field: %v\n", vm.ip, objMap)
-				}
-				// Push the modified object back onto the stack
-				vm.Push(objMap)
-			} else {
-				// Debug output
-				if vm.debug {
-					fmt.Printf("Function IP: %d, Object is not a map, type: %T, value: %v, pushing back unchanged\n", vm.ip, obj, obj)
-				}
-				// If obj is not a map, push it back unchanged
-				vm.Push(obj)
-			}
-		case OpGetIndex:
-			if vm.stack.Size() < 2 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in GET_INDEX: expected 2 values, got %d", vm.stack.Size())
-			}
-			index := vm.Pop()
-			array := vm.Pop()
-
-			// Convert index to int if it's not already
-			var indexInt int
-			if i, ok := index.(int); ok {
-				indexInt = i
-			} else {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("index must be an integer, got %T", index)
-			}
-
-			// For now, we assume array is a slice of interface{}
-			if arraySlice, ok := array.([]interface{}); ok {
-				if indexInt >= 0 && indexInt < len(arraySlice) {
-					vm.Push(arraySlice[indexInt])
-				} else {
-					vm.Push(nil)
-				}
-			} else {
-				// If array is not a slice, return nil
-				vm.Push(nil)
-			}
-		case OpSetIndex:
-			if vm.stack.Size() < 3 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in SET_INDEX: expected 3 values, got %d", vm.stack.Size())
-			}
-			value := vm.Pop()
-			index := vm.Pop()
-			array := vm.Pop()
-
-			// Convert index to int if it's not already
-			var indexInt int
-			if i, ok := index.(int); ok {
-				indexInt = i
-			} else {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("index must be an integer, got %T", index)
-			}
-
-			// For now, we assume array is a slice of interface{}
-			if arraySlice, ok := array.([]interface{}); ok {
-				if indexInt >= 0 && indexInt < len(arraySlice) {
-					arraySlice[indexInt] = value
-					// Push the modified array back onto the stack
-					vm.Push(arraySlice)
-				} else {
-					// Index out of bounds, push the array back unchanged
-					vm.Push(arraySlice)
-				}
-			} else {
-				// If array is not a slice, push it back unchanged
-				vm.Push(array)
-			}
-		case OpRotate:
-			if vm.stack.Size() < 3 {
-				// Restore execution state before returning error
-				vm.ip = currentIP
-				vm.locals = currentLocals
-				vm.executionCount = currentExecutionCount
-				return nil, fmt.Errorf("stack underflow in ROTATE: expected 3 values, got %d", vm.stack.Size())
-			}
-			// Rotate the top three elements: [a, b, c] -> [b, c, a]
-			if err := vm.stack.Rotate(3); err != nil {
-				return nil, fmt.Errorf("rotate failed: %v", err)
-			}
-		}
-
-		vm.executionCount++
+	// Push arguments onto the stack in the order they were passed
+	// The function body will pop them in reverse order (last parameter first)
+	for _, arg := range args {
+		vm.Push(arg)
 	}
 
-	// Restore execution state
-	vm.ip = currentIP
-	vm.locals = currentLocals
+	// Use the Run method to execute the function instructions
+	// This ensures proper context management and error handling
+	result, err := vm.Run(funcCtx, scriptFunc.StartIP, scriptFunc.EndIP)
 
-	// If we reach here, the function didn't return explicitly
-	return nil, nil
+	// Clean up: remove the function context from parent's children
+	if vm.currentCtx != nil && vm.currentCtx.GetParent() != nil {
+		parent := vm.currentCtx.GetParent()
+		parent.RemoveChild(funcCtx.GetPathKey())
+		// Restore parent context
+		vm.currentCtx = parent
+	}
+
+	return result, err
 }
 
 // deepCopyMap creates a deep copy of a map
@@ -947,59 +414,6 @@ func (vm *VM) GetType(name string) (types.IType, bool) {
 // SetModuleManager sets the module manager interface for the VM
 func (vm *VM) SetModuleManager(mm ModuleManagerInterface) {
 	vm.moduleManager = mm
-}
-
-// executeBinaryOp executes a binary operation
-func (vm *VM) executeBinaryOp(op BinaryOp, left, right interface{}) (interface{}, error) {
-	switch op {
-	case OpAdd:
-		return vm.add(left, right)
-	case OpSub:
-		return vm.sub(left, right)
-	case OpMul:
-		return vm.mul(left, right)
-	case OpDiv:
-		return vm.div(left, right)
-	case OpMod:
-		return vm.mod(left, right)
-	case OpEqual:
-		return reflect.DeepEqual(left, right), nil
-	case OpNotEqual:
-		return !reflect.DeepEqual(left, right), nil
-	case OpLess:
-		return vm.less(left, right)
-	case OpLessEqual:
-		return vm.lessEqual(left, right)
-	case OpGreater:
-		return vm.greater(left, right)
-	case OpGreaterEqual:
-		return vm.greaterEqual(left, right)
-	case OpAnd:
-		return isTruthy(left) && isTruthy(right), nil
-	case OpOr:
-		return isTruthy(left) || isTruthy(right), nil
-	default:
-		return nil, fmt.Errorf("unknown binary operation: %d", op)
-	}
-}
-
-// executeUnaryOp executes a unary operation
-func (vm *VM) executeUnaryOp(op UnaryOp, value interface{}) (interface{}, error) {
-	switch op {
-	case OpNeg:
-		switch v := value.(type) {
-		case int:
-			return -v, nil
-		case float64:
-			return -v, nil
-		default:
-			return nil, fmt.Errorf("unsupported type for negation: %T", value)
-		}
-	case OpNot:
-		return !isTruthy(value), nil
-	default:
-		return nil, fmt.Errorf("unknown unary operation: %d", op)
-	}
 }
 
 // Helper functions for arithmetic operations
@@ -1231,5 +645,58 @@ func isTruthy(value interface{}) bool {
 		return v != ""
 	default:
 		return true
+	}
+}
+
+// executeBinaryOp executes a binary operation
+func (vm *VM) executeBinaryOp(op BinaryOp, left, right interface{}) (interface{}, error) {
+	switch op {
+	case OpAdd:
+		return vm.add(left, right)
+	case OpSub:
+		return vm.sub(left, right)
+	case OpMul:
+		return vm.mul(left, right)
+	case OpDiv:
+		return vm.div(left, right)
+	case OpMod:
+		return vm.mod(left, right)
+	case OpEqual:
+		return reflect.DeepEqual(left, right), nil
+	case OpNotEqual:
+		return !reflect.DeepEqual(left, right), nil
+	case OpLess:
+		return vm.less(left, right)
+	case OpLessEqual:
+		return vm.lessEqual(left, right)
+	case OpGreater:
+		return vm.greater(left, right)
+	case OpGreaterEqual:
+		return vm.greaterEqual(left, right)
+	case OpAnd:
+		return isTruthy(left) && isTruthy(right), nil
+	case OpOr:
+		return isTruthy(left) || isTruthy(right), nil
+	default:
+		return nil, fmt.Errorf("unknown binary operation: %d", op)
+	}
+}
+
+// executeUnaryOp executes a unary operation
+func (vm *VM) executeUnaryOp(op UnaryOp, value interface{}) (interface{}, error) {
+	switch op {
+	case OpNeg:
+		switch v := value.(type) {
+		case int:
+			return -v, nil
+		case float64:
+			return -v, nil
+		default:
+			return nil, fmt.Errorf("unsupported type for negation: %T", value)
+		}
+	case OpNot:
+		return !isTruthy(value), nil
+	default:
+		return nil, fmt.Errorf("unknown unary operation: %d", op)
 	}
 }
