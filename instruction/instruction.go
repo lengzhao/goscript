@@ -93,6 +93,9 @@ const (
 
 	// Create a new variable
 	OpCreateVar
+
+	// Break from loop
+	OpBreak
 )
 
 // String returns the string representation of an OpCode
@@ -152,6 +155,8 @@ func (op OpCode) String() string {
 		return "OpExitScopeWithKey"
 	case OpCreateVar:
 		return "OpCreateVar"
+	case OpBreak:
+		return "OpBreak"
 	default:
 		return fmt.Sprintf("OpCode(%d)", op)
 	}
@@ -262,6 +267,8 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("EXIT_SCOPE_WITH_KEY %v", i.Arg)
 	case OpCreateVar:
 		return fmt.Sprintf("CREATE_VAR %v", i.Arg)
+	case OpBreak:
+		return "BREAK"
 	default:
 		return fmt.Sprintf("UNKNOWN(%d) %v %v", i.Op, i.Arg, i.Arg2)
 	}

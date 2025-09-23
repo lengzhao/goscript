@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/lengzhao/goscript/context"
+	"github.com/lengzhao/goscript/instruction"
 	"github.com/lengzhao/goscript/types"
 	"github.com/lengzhao/goscript/vm"
 )
@@ -52,6 +53,9 @@ type Compiler struct {
 
 	// Import declarations to handle
 	imports []string
+
+	// Global variables that need to be pre-declared
+	globalVars map[string]bool
 }
 
 // NewCompiler creates a new compiler
@@ -65,6 +69,7 @@ func NewCompiler(vm *vm.VM, context *context.ExecutionContext) *Compiler {
 		variableTypes:   make(map[string]string),
 		expressionTypes: make(map[ast.Expr]string),
 		imports:         make([]string, 0),
+		globalVars:      make(map[string]bool),
 	}
 }
 
@@ -73,6 +78,7 @@ func (c *Compiler) Compile(file *ast.File) error {
 	// Collect all function declarations, type declarations, and import declarations
 	var typeDecls []*ast.GenDecl
 	var importDecls []*ast.GenDecl
+	var varDecls []*ast.GenDecl
 	var mainFunc *ast.FuncDecl
 	var otherFuncs []*ast.FuncDecl
 	var methodFuncs []*ast.FuncDecl
@@ -100,6 +106,10 @@ func (c *Compiler) Compile(file *ast.File) error {
 				// Handle import declarations
 				importDecls = append(importDecls, d)
 				fmt.Printf("Found import declaration\n")
+			} else if d.Tok == token.VAR {
+				// Handle variable declarations
+				varDecls = append(varDecls, d)
+				fmt.Printf("Found variable declaration\n")
 			}
 		}
 	}
@@ -112,9 +122,31 @@ func (c *Compiler) Compile(file *ast.File) error {
 		}
 	}
 
+	// Process variable declarations (collect global variables)
+	for _, decl := range varDecls {
+		err := c.collectGlobalVars(decl)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Pre-declare global variables
+	for varName := range c.globalVars {
+		// Emit instructions to create global variables
+		c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, varName, nil))
+	}
+
 	// Process type declarations
 	for _, decl := range typeDecls {
 		err := c.compileTypeDecl(decl)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Process variable declarations (compile initial values)
+	for _, decl := range varDecls {
+		err := c.compileVarDecl(decl)
 		if err != nil {
 			return err
 		}
@@ -175,6 +207,54 @@ func (c *Compiler) Compile(file *ast.File) error {
 		err := c.compileFunctionBody(fn)
 		if err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+// collectGlobalVars collects global variable names
+func (c *Compiler) collectGlobalVars(decl *ast.GenDecl) error {
+	// Process each specification in the declaration
+	for _, spec := range decl.Specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			return fmt.Errorf("unsupported value spec type: %T", spec)
+		}
+
+		// For each variable name in the spec
+		for _, name := range valueSpec.Names {
+			// Add to global variables map
+			c.globalVars[name.Name] = true
+		}
+	}
+
+	return nil
+}
+
+// compileVarDecl compiles a variable declaration
+func (c *Compiler) compileVarDecl(decl *ast.GenDecl) error {
+	// Process each specification in the declaration
+	for _, spec := range decl.Specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			return fmt.Errorf("unsupported value spec type: %T", spec)
+		}
+
+		// For each variable name in the spec
+		for i, name := range valueSpec.Names {
+			// If there's an initial value, compile and assign it
+			if i < len(valueSpec.Values) {
+				err := c.compileExpr(valueSpec.Values[i])
+				if err != nil {
+					return err
+				}
+				c.emitInstruction(vm.NewInstruction(vm.OpStoreName, name.Name, nil))
+			} else {
+				// Initialize with zero value
+				c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
+				c.emitInstruction(vm.NewInstruction(vm.OpStoreName, name.Name, nil))
+			}
 		}
 	}
 
@@ -512,6 +592,12 @@ func (c *Compiler) compileFunctionBody(fn *ast.FuncDecl) error {
 
 // compileBlockStmt compiles a block statement
 func (c *Compiler) compileBlockStmt(block *ast.BlockStmt) error {
+	// Generate a unique scope key for this block
+	scopeKey := fmt.Sprintf("block_%d", c.ip)
+
+	// Emit instruction to enter the block scope
+	c.emitInstruction(vm.NewInstruction(instruction.OpEnterScopeWithKey, scopeKey, nil))
+
 	// Compile each statement in the block
 	for _, stmt := range block.List {
 		err := c.compileStmt(stmt)
@@ -519,6 +605,9 @@ func (c *Compiler) compileBlockStmt(block *ast.BlockStmt) error {
 			return err
 		}
 	}
+
+	// Emit instruction to exit the block scope
+	c.emitInstruction(vm.NewInstruction(instruction.OpExitScopeWithKey, scopeKey, nil))
 
 	return nil
 }
@@ -544,6 +633,8 @@ func (c *Compiler) compileStmt(stmt ast.Stmt) error {
 		return c.compileDeclStmt(s)
 	case *ast.BlockStmt:
 		return c.compileBlockStmt(s)
+	case *ast.BranchStmt:
+		return c.compileBranchStmt(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -1774,6 +1865,21 @@ func (c *Compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
 	}
 
 	return nil
+}
+
+// compileBranchStmt compiles a branch statement (break, continue)
+func (c *Compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
+	switch stmt.Tok {
+	case token.BREAK:
+		// Emit break instruction
+		c.emitInstruction(vm.NewInstruction(vm.OpBreak, nil, nil))
+		return nil
+	case token.CONTINUE:
+		// For now, we don't support continue statements
+		return fmt.Errorf("continue statements are not yet supported")
+	default:
+		return fmt.Errorf("unsupported branch statement: %s", stmt.Tok)
+	}
 }
 
 // emitInstruction adds an instruction to the VM and updates the IP

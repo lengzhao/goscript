@@ -99,6 +99,9 @@ const (
 
 	// Create a new variable
 	OpCreateVar = instruction.OpCreateVar
+
+	// Break from loop
+	OpBreak = instruction.OpBreak
 )
 
 // BinaryOp represents a binary operation

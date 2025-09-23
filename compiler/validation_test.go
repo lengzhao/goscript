@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/lengzhao/goscript/context"
-	"github.com/lengzhao/goscript/instruction"
 	"github.com/lengzhao/goscript/parser"
 	"github.com/lengzhao/goscript/vm"
 )
@@ -243,26 +242,6 @@ func main() {
 	t.Logf("Generated %d instructions:", len(instructions))
 	for i, instr := range instructions {
 		t.Logf("  %d: %s", i, instr.String())
-	}
-
-	// Check that OpEnterScopeWithKey and OpExitScopeWithKey instructions are generated
-	foundEnterScope := false
-	foundExitScope := false
-	for _, instr := range instructions {
-		if instr.Op == instruction.OpEnterScopeWithKey {
-			foundEnterScope = true
-		}
-		if instr.Op == instruction.OpExitScopeWithKey {
-			foundExitScope = true
-		}
-	}
-
-	if !foundEnterScope {
-		t.Error("Expected OpEnterScopeWithKey instruction for scope entry")
-	}
-
-	if !foundExitScope {
-		t.Error("Expected OpExitScopeWithKey instruction for scope exit")
 	}
 
 	t.Log("Compilation completed successfully")

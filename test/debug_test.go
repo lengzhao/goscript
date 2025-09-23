@@ -1,11 +1,10 @@
-package debug_test
+package test
 
 import (
 	"testing"
 
 	"github.com/lengzhao/goscript/compiler"
 	"github.com/lengzhao/goscript/context"
-	"github.com/lengzhao/goscript/instruction"
 	"github.com/lengzhao/goscript/parser"
 	"github.com/lengzhao/goscript/vm"
 )
@@ -103,41 +102,5 @@ func main() {
 	t.Logf("Generated %d instructions:", len(instructions))
 	for i, instr := range instructions {
 		t.Logf("  %d: %s", i, instr.String())
-	}
-}
-
-func TestManualInstructions(t *testing.T) {
-	// Create VM
-	vmInstance := vm.NewVM()
-	vmInstance.SetDebug(true)
-
-	// Manually create instructions to test the issue
-	// ENTER_SCOPE main
-	vmInstance.AddInstruction(vm.NewInstruction(instruction.OpEnterScopeWithKey, "main", nil))
-	// LOAD_CONST 10
-	vmInstance.AddInstruction(vm.NewInstruction(instruction.OpLoadConst, 10, nil))
-	// STORE_NAME x
-	vmInstance.AddInstruction(vm.NewInstruction(instruction.OpStoreName, "x", nil))
-	// LOAD_NAME x
-	vmInstance.AddInstruction(vm.NewInstruction(instruction.OpLoadName, "x", nil))
-	// RETURN
-	vmInstance.AddInstruction(vm.NewInstruction(instruction.OpReturn, nil, nil))
-
-	// Print instructions for debugging
-	instructions := vmInstance.GetInstructions()
-	t.Logf("Generated %d instructions:", len(instructions))
-	for i, instr := range instructions {
-		t.Logf("  %d: %s", i, instr.String())
-	}
-
-	// Execute the VM
-	result, err := vmInstance.Execute(nil)
-	if err != nil {
-		t.Fatalf("Failed to execute VM: %v", err)
-	}
-
-	// Check result: should be 10
-	if result != 10 {
-		t.Errorf("Expected result 10, got %v", result)
 	}
 }

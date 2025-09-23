@@ -77,6 +77,9 @@ func (vm *VM) registerHandlers() {
 	// Context-based scope management (new)
 	vm.handlers[instruction.OpEnterScopeWithKey] = vm.handleEnterScopeWithKey
 	vm.handlers[instruction.OpExitScopeWithKey] = vm.handleExitScopeWithKey
+
+	// Loop control
+	vm.handlers[instruction.OpBreak] = vm.handleBreak
 }
 
 // Basic operation handlers
@@ -995,5 +998,26 @@ func (vm *VM) handleExitScopeWithKey(v *VM, instr *Instruction) error {
 		}
 	}
 
+	return nil
+}
+
+// handleBreak handles break statement
+func (vm *VM) handleBreak(v *VM, instr *Instruction) error {
+	// For break statement, we need to jump to the end of the current loop
+	// Looking at the instruction sequence, we can see that:
+	// - The loop body ends with a JUMP instruction that goes back to the start
+	// - We need to skip that JUMP and go to the next instruction after it
+
+	// Find the next JUMP instruction after the current IP and jump to the instruction after that
+	for i := v.ip + 1; i < len(v.instructions); i++ {
+		if v.instructions[i].Op == OpJump {
+			// Jump to the instruction after the JUMP
+			v.ip = i
+			return nil
+		}
+	}
+
+	// If no JUMP found, jump to end of instructions
+	v.ip = len(v.instructions) - 1
 	return nil
 }

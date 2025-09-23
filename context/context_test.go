@@ -25,45 +25,14 @@ func TestNewContext(t *testing.T) {
 	}
 }
 
-func TestContextVariableOperations(t *testing.T) {
-	ctx := NewContext("test", nil)
-
-	// Test SetVariable and GetVariable
-	ctx.SetVariable("testVar", 42)
-	value, exists := ctx.GetVariable("testVar")
-	if !exists {
-		t.Fatal("Expected variable to exist")
-	}
-
-	if value != 42 {
-		t.Errorf("Expected value 42, got %v", value)
-	}
-
-	// Test HasVariable
-	if !ctx.HasVariable("testVar") {
-		t.Error("Expected HasVariable to return true")
-	}
-
-	if ctx.HasVariable("nonExistent") {
-		t.Error("Expected HasVariable to return false for non-existent variable")
-	}
-
-	// Test DeleteVariable
-	ctx.DeleteVariable("testVar")
-	_, exists = ctx.GetVariable("testVar")
-	if exists {
-		t.Error("Expected variable to be deleted")
-	}
-}
-
 func TestContextHierarchy(t *testing.T) {
 	// Create parent context
 	parent := NewContext("parent", nil)
-	parent.SetVariable("parentVar", "parentValue")
+	parent.SetVariableWithType("parentVar", "parentValue", "string")
 
 	// Create child context
 	child := NewContext("child", parent)
-	child.SetVariable("childVar", "childValue")
+	child.SetVariableWithType("childVar", "childValue", "string")
 
 	// Test variable lookup in hierarchy
 	// Child variable should be found in child context
@@ -158,7 +127,7 @@ func TestContextVariablesWithTypes(t *testing.T) {
 
 func TestMustGetVariable(t *testing.T) {
 	ctx := NewContext("test", nil)
-	ctx.SetVariable("existingVar", "value")
+	ctx.SetVariableWithType("existingVar", "value", "string")
 
 	// Test that existing variable can be retrieved
 	value := ctx.MustGetVariable("existingVar")

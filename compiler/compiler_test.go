@@ -1144,9 +1144,6 @@ func main() {
 
 // TestCompoundAssignmentWithIndex tests compound assignment operators with index expressions
 func TestCompoundAssignmentWithIndex(t *testing.T) {
-	// Skip this test as the compiler doesn't fully support index expressions in compound assignments
-	t.Skip("Skipping test: compiler doesn't fully support index expressions in compound assignments")
-
 	// Create a script with compound assignment operators on array/slice elements
 	script := `
 package main
@@ -1206,8 +1203,6 @@ func main() {
 
 // TestIncDecOperatorsWithIndex tests increment and decrement operators with index expressions
 func TestIncDecOperatorsWithIndex(t *testing.T) {
-	// Skip this test as the compiler doesn't fully support index expressions in increment/decrement operators
-	t.Skip("Skipping test: compiler doesn't fully support index expressions in increment/decrement operators")
 
 	// Create a script with increment and decrement operators on array/slice elements
 	script := `
@@ -1308,7 +1303,7 @@ func main() {
 // TestInfiniteForLoop tests infinite for loops
 func TestInfiniteForLoop(t *testing.T) {
 	// Skip this test as the compiler doesn't support break statements
-	t.Skip("Skipping test: compiler doesn't support break statements")
+	// t.Skip("Skipping test: compiler doesn't support break statements")
 
 	// Create a script with infinite for loops
 	script := `
