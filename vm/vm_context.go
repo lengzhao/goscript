@@ -87,16 +87,6 @@ func NewVMWithContex() *VM {
 	return vm
 }
 
-// GetGlobalContext returns the global context
-func (vm *VM) GetGlobalContext() *context.Context {
-	return vm.globalCtx
-}
-
-// GetCurrentContext returns the current context
-func (vm *VM) GetCurrentContext() *context.Context {
-	return vm.currentCtx
-}
-
 // EnterScope creates and enters a new scope with the given path key
 func (vm *VM) EnterScope(pathKey string) *context.Context {
 	// Create new context with current context as parent
@@ -143,34 +133,17 @@ func (vm *VM) ExitScope() *context.Context {
 	return vm.currentCtx
 }
 
-// SetVariable sets a variable in the current context
+// SetVariable sets a variable, 对外接口，强制创建、覆盖
 func (vm *VM) SetVariable(name string, value interface{}) error {
 	if vm.currentCtx == nil {
 		return fmt.Errorf("no current context")
 	}
 
-	vm.currentCtx.SetVariableWithType(name, value, "unknown")
-	// vm.currentCtx.SetVariable(name, value)
+	vm.currentCtx.CreateVariableWithType(name, value, "unknown")
 
 	// Debug output
 	if vm.debug {
 		fmt.Printf("Set variable in context %s: %s = %v\n", vm.currentCtx.GetPathKey(), name, value)
-	}
-
-	return nil
-}
-
-// SetVariableWithType sets a variable with its type in the current context
-func (vm *VM) SetVariableWithType(name string, value interface{}, varType string) error {
-	if vm.currentCtx == nil {
-		return fmt.Errorf("no current context")
-	}
-
-	vm.currentCtx.SetVariableWithType(name, value, varType)
-
-	// Debug output
-	if vm.debug {
-		fmt.Printf("Set variable with type in context %s: %s = %v (%s)\n", vm.currentCtx.GetPathKey(), name, value, varType)
 	}
 
 	return nil
@@ -185,24 +158,6 @@ func (vm *VM) GetVariable(name string) (interface{}, bool) {
 	return vm.currentCtx.GetVariable(name)
 }
 
-// MustGetVariable gets a variable, panics if not found
-func (vm *VM) MustGetVariable(name string) interface{} {
-	if vm.currentCtx == nil {
-		panic("no current context")
-	}
-
-	return vm.currentCtx.MustGetVariable(name)
-}
-
-// HasVariable checks if a variable exists in the current context
-func (vm *VM) HasVariable(name string) bool {
-	if vm.currentCtx == nil {
-		return false
-	}
-
-	return vm.currentCtx.HasVariable(name)
-}
-
 // DeleteVariable removes a variable from the current context
 func (vm *VM) DeleteVariable(name string) {
 	if vm.currentCtx == nil {
@@ -215,15 +170,6 @@ func (vm *VM) DeleteVariable(name string) {
 	if vm.debug {
 		fmt.Printf("Deleted variable from context %s: %s\n", vm.currentCtx.GetPathKey(), name)
 	}
-}
-
-// GetVariableType gets the type of a variable in the context hierarchy
-func (vm *VM) GetVariableType(name string) (string, bool) {
-	if vm.currentCtx == nil {
-		return "", false
-	}
-
-	return vm.currentCtx.GetVariableType(name)
 }
 
 // Run executes instructions within a specific context

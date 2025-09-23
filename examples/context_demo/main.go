@@ -77,10 +77,6 @@ func main() {
 	// Demonstrate manual scope management
 	fmt.Println("\nDemonstrating manual scope management:")
 
-	// Get the global context
-	globalCtx := vmInstance.GetGlobalContext()
-	fmt.Printf("Global context path: %s\n", globalCtx.GetPathKey())
-
 	// Enter a new scope manually
 	newCtx := vmInstance.EnterScope("manual.test")
 	fmt.Printf("Entered scope: %s\n", newCtx.GetPathKey())

@@ -28,11 +28,11 @@ func TestNewContext(t *testing.T) {
 func TestContextHierarchy(t *testing.T) {
 	// Create parent context
 	parent := NewContext("parent", nil)
-	parent.SetVariableWithType("parentVar", "parentValue", "string")
+	parent.CreateVariableWithType("parentVar", "parentValue", "string")
 
 	// Create child context
 	child := NewContext("child", parent)
-	child.SetVariableWithType("childVar", "childValue", "string")
+	child.CreateVariableWithType("childVar", "childValue", "string")
 
 	// Test variable lookup in hierarchy
 	// Child variable should be found in child context
@@ -95,8 +95,8 @@ func TestContextChildren(t *testing.T) {
 func TestContextVariablesWithTypes(t *testing.T) {
 	ctx := NewContext("test", nil)
 
-	// Test SetVariableWithType
-	ctx.SetVariableWithType("typedVar", 42, "int")
+	// Test CreateVariableWithType
+	ctx.CreateVariableWithType("typedVar", 42, "int")
 
 	// Test GetVariableType
 	varType, exists := ctx.GetVariableType("typedVar")
@@ -127,7 +127,7 @@ func TestContextVariablesWithTypes(t *testing.T) {
 
 func TestMustGetVariable(t *testing.T) {
 	ctx := NewContext("test", nil)
-	ctx.SetVariableWithType("existingVar", "value", "string")
+	ctx.CreateVariableWithType("existingVar", "value", "string")
 
 	// Test that existing variable can be retrieved
 	value := ctx.MustGetVariable("existingVar")

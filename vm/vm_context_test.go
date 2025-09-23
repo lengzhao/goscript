@@ -48,40 +48,6 @@ func TestNewVMWithContex(t *testing.T) {
 	}
 }
 
-func TestVMContextOperations(t *testing.T) {
-	vm := NewVMWithContex()
-
-	// Test EnterScope and ExitScope
-	initialCtx := vm.GetCurrentContext()
-	if initialCtx.GetPathKey() != "global" {
-		t.Errorf("Expected initial context path key 'global', got '%s'", initialCtx.GetPathKey())
-	}
-
-	// Enter a new scope
-	newCtx := vm.EnterScope("test.scope")
-	if newCtx == nil {
-		t.Fatal("Expected non-nil new context")
-	}
-
-	if newCtx.GetPathKey() != "test.scope" {
-		t.Errorf("Expected new context path key 'test.scope', got '%s'", newCtx.GetPathKey())
-	}
-
-	if vm.GetCurrentContext() != newCtx {
-		t.Error("Expected current context to be the new context")
-	}
-
-	// Exit the scope
-	parentCtx := vm.ExitScope()
-	if parentCtx != initialCtx {
-		t.Error("Expected parent context to be the initial context")
-	}
-
-	if vm.GetCurrentContext() != initialCtx {
-		t.Error("Expected current context to be back to initial context")
-	}
-}
-
 func TestVMVariableOperations(t *testing.T) {
 	vm := NewVMWithContex()
 
@@ -98,11 +64,6 @@ func TestVMVariableOperations(t *testing.T) {
 
 	if value != 42 {
 		t.Errorf("Expected value 42, got %v", value)
-	}
-
-	// Test HasVariable
-	if !vm.HasVariable("testVar") {
-		t.Error("Expected HasVariable to return true")
 	}
 
 	// Test DeleteVariable
@@ -184,38 +145,5 @@ func TestVMExecute(t *testing.T) {
 	// The result should be 50 (10 * 5)
 	if result != 50 {
 		t.Errorf("Expected result 50, got %v", result)
-	}
-}
-
-func TestVMGetGlobalContext(t *testing.T) {
-	vm := NewVMWithContex()
-
-	globalCtx := vm.GetGlobalContext()
-	if globalCtx == nil {
-		t.Fatal("Expected non-nil global context")
-	}
-
-	if globalCtx.GetPathKey() != "global" {
-		t.Errorf("Expected global context path key 'global', got '%s'", globalCtx.GetPathKey())
-	}
-}
-
-func TestVMGetCurrentContext(t *testing.T) {
-	vm := NewVMWithContex()
-
-	currentCtx := vm.GetCurrentContext()
-	if currentCtx == nil {
-		t.Fatal("Expected non-nil current context")
-	}
-
-	if currentCtx.GetPathKey() != "global" {
-		t.Errorf("Expected current context path key 'global', got '%s'", currentCtx.GetPathKey())
-	}
-
-	// Enter a new scope
-	vm.EnterScope("test.scope")
-	currentCtx = vm.GetCurrentContext()
-	if currentCtx.GetPathKey() != "test.scope" {
-		t.Errorf("Expected current context path key 'test.scope', got '%s'", currentCtx.GetPathKey())
 	}
 }

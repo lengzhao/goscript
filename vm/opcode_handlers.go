@@ -201,7 +201,7 @@ func (vm *VM) handleCreateVar(v *VM, instr *Instruction) error {
 
 	// Create the variable in the current context with a nil value
 	if v.currentCtx != nil {
-		v.currentCtx.SetVariableWithType(name, nil, "unknown")
+		v.currentCtx.CreateVariableWithType(name, nil, "unknown")
 	} else {
 		// If no context is available, return an error
 		return &VmError{
@@ -934,7 +934,7 @@ func (vm *VM) handleImport(v *VM, instr *Instruction) error {
 	// Store the module name as a global variable so it can be referenced
 	if v.currentCtx != nil {
 		// Create the module variable in the global context
-		v.currentCtx.SetVariableWithType(moduleName, moduleName, "module")
+		v.currentCtx.CreateVariableWithType(moduleName, moduleName, "module")
 	}
 
 	// Debug output

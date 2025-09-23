@@ -85,39 +85,8 @@ func (ctx *Context) SetVariable(name string, value interface{}) {
 	ctx.parent.SetVariable(name, value)
 }
 
-// hasVariableInHierarchy checks if a variable exists anywhere in the context hierarchy
-func (ctx *Context) hasVariableInHierarchy(name string) bool {
-	// Check current context
-	if _, exists := ctx.variables[name]; exists {
-		return true
-	}
-
-	// Check parent context if exists
-	if ctx.parent != nil {
-		return ctx.parent.hasVariableInHierarchy(name)
-	}
-
-	return false
-}
-
-// setVariableInHierarchy sets a variable in the context hierarchy where it's found
-func (ctx *Context) setVariableInHierarchy(name string, value interface{}) bool {
-	// Check current context
-	if _, exists := ctx.variables[name]; exists {
-		ctx.variables[name] = value
-		return true
-	}
-
-	// Check parent context if exists
-	if ctx.parent != nil {
-		return ctx.parent.setVariableInHierarchy(name, value)
-	}
-
-	return false
-}
-
-// SetVariableWithType sets a variable with its type in the current context
-func (ctx *Context) SetVariableWithType(name string, value interface{}, varType string) {
+// CreateVariableWithType sets a variable with its type in the current context
+func (ctx *Context) CreateVariableWithType(name string, value interface{}, varType string) {
 	ctx.variables[name] = value
 	ctx.types[name] = varType
 }
