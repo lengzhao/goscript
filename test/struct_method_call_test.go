@@ -12,7 +12,7 @@ import (
 func TestStructMethodCall(t *testing.T) {
 	// Create a new VM
 	vmInstance := vm.NewVM()
-	// vmInstance.SetDebug(true) // Enable debug output // Not implemented in current VM
+	vmInstance.SetDebug(true) // Enable debug output
 
 	// Create a new compiler
 	compiler := compiler.NewCompiler(vmInstance)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/lengzhao/goscript/builtin"
-	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/instruction"
 	"github.com/lengzhao/goscript/symbol"
 	"github.com/lengzhao/goscript/types"
@@ -25,9 +24,6 @@ type Module struct {
 	// SymbolTable is the symbol table for the module
 	SymbolTable *symbol.SymbolTable
 
-	// Context is the execution context for the module
-	Context *context.ExecutionContext
-
 	// Functions maps function names to functions
 	Functions map[string]Function
 
@@ -44,7 +40,6 @@ func NewModule(name string) *Module {
 		Name:         name,
 		Instructions: make([]*instruction.Instruction, 0),
 		SymbolTable:  symbol.NewSymbolTable(),
-		Context:      context.NewExecutionContext(),
 		Functions:    make(map[string]Function),
 		Dependencies: make([]string, 0),
 		Debug:        false,
@@ -80,17 +75,6 @@ func (m *Module) AddSymbol(sym *symbol.Symbol) {
 // GetSymbol retrieves a symbol from the module
 func (m *Module) GetSymbol(name string) *symbol.Symbol {
 	return m.SymbolTable.Get(name)
-}
-
-// SetContext sets the execution context for the module
-func (m *Module) SetContext(ctx *context.ExecutionContext) {
-	m.Context = ctx
-	m.Context.ModuleName = m.Name
-
-	// Debug output
-	if m.Debug {
-		fmt.Printf("Module %s: Set context\n", m.Name)
-	}
 }
 
 // AddFunction adds a function to the module
@@ -158,7 +142,6 @@ func (m *Module) GetDependencies() []string {
 // SetDebug enables or disables debug mode
 func (m *Module) SetDebug(debug bool) {
 	m.Debug = debug
-	m.Context.SetDebug(debug)
 }
 
 // String returns a string representation of the module
@@ -175,9 +158,6 @@ type ModuleManager struct {
 	// currentModule is the name of the current module
 	currentModule string
 
-	// globalContext is the global execution context
-	globalContext *context.ExecutionContext
-
 	// Debug mode
 	debug bool
 }
@@ -187,7 +167,6 @@ func NewModuleManager() *ModuleManager {
 	mm := &ModuleManager{
 		modules:       make(map[string]*Module),
 		currentModule: "main",
-		globalContext: context.NewExecutionContext(),
 		debug:         false,
 	}
 
@@ -366,11 +345,6 @@ func (mm *ModuleManager) ImportModule(moduleName string) error {
 	return nil
 }
 
-// GetGlobalContext returns the global execution context
-func (mm *ModuleManager) GetGlobalContext() *context.ExecutionContext {
-	return mm.globalContext
-}
-
 // GetAllModules returns all registered modules
 func (mm *ModuleManager) GetAllModules() map[string]*Module {
 	return mm.modules
@@ -409,7 +383,6 @@ func (mm *ModuleManager) RemoveModule(name string) error {
 // SetDebug enables or disables debug mode
 func (mm *ModuleManager) SetDebug(debug bool) {
 	mm.debug = debug
-	mm.globalContext.SetDebug(debug)
 
 	// Set debug mode for all modules
 	for _, module := range mm.modules {

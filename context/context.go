@@ -74,21 +74,25 @@ func (ctx *Context) MustGetVariable(name string) interface{} {
 }
 
 // SetVariable sets a variable in the current context
-func (ctx *Context) SetVariable(name string, value interface{}) {
+func (ctx *Context) SetVariable(name string, value interface{}) error {
 	if _, exists := ctx.variables[name]; exists {
 		ctx.variables[name] = value
-		return
+		return nil
 	}
 	if ctx.parent == nil {
-		panic(fmt.Sprintf("variable %s not found in context hierarchy", name))
+		return fmt.Errorf("variable %s not found in context hierarchy", name)
 	}
-	ctx.parent.SetVariable(name, value)
+	return ctx.parent.SetVariable(name, value)
 }
 
 // CreateVariableWithType sets a variable with its type in the current context
-func (ctx *Context) CreateVariableWithType(name string, value interface{}, varType string) {
+func (ctx *Context) CreateVariableWithType(name string, value interface{}, varType string) error {
+	if _, exists := ctx.variables[name]; exists {
+		return fmt.Errorf("variable %s already exists", name)
+	}
 	ctx.variables[name] = value
 	ctx.types[name] = varType
+	return nil
 }
 
 // GetVariableType gets the type of a variable in the context hierarchy

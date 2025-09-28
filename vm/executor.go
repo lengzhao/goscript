@@ -19,7 +19,7 @@ func (e *ReturnError) Error() string {
 }
 
 // OpHandler defines the signature for opcode handlers
-type OpHandler func(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error)
+type OpHandler func(stack *Stack, instr *instruction.Instruction, pc int) (int, error)
 
 // Executor handles the execution of instructions
 type Executor struct {
@@ -75,7 +75,7 @@ func (exec *Executor) RegisterOpHandler(op instruction.OpCode, handler OpHandler
 }
 
 // executeInstructions executes a sequence of instructions with the given context
-func (exec *Executor) executeInstructions(instructions []*instruction.Instruction, ctx *execContext.Context) (interface{}, error) {
+func (exec *Executor) executeInstructions(instructions []*instruction.Instruction) (interface{}, error) {
 	stack := NewStack()
 	pc := 0 // program counter
 
@@ -96,7 +96,9 @@ func (exec *Executor) executeInstructions(instructions []*instruction.Instructio
 		exec.vm.instructionCount++
 
 		// Debug output
-		//fmt.Printf("Executing instruction %d: %s, stack size: %d\n", pc, instr.String(), stack.Len())
+		if exec.vm.debug {
+			fmt.Printf("Executing instruction %d: %s, stack size: %d, stack: %v\n", pc, instr.String(), stack.Len(), stack.Items())
+		}
 
 		// Look up the handler for this opcode
 		handler, exists := exec.opcodeHandlers[instr.Op]
@@ -105,10 +107,13 @@ func (exec *Executor) executeInstructions(instructions []*instruction.Instructio
 		}
 
 		// Execute the handler
-		newPC, err := handler(ctx, stack, instr, pc)
+		newPC, err := handler(stack, instr, pc)
 		if err != nil {
 			// Check if it's a return error
 			if returnErr, ok := err.(*ReturnError); ok {
+				if exec.vm.debug {
+					fmt.Printf("Return with value: %v\n", returnErr.Value)
+				}
 				return returnErr.Value, nil
 			}
 			return nil, err
@@ -121,18 +126,18 @@ func (exec *Executor) executeInstructions(instructions []*instruction.Instructio
 }
 
 // handleNop handles the NOP opcode
-func (exec *Executor) handleNop(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleNop(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	return pc + 1, nil
 }
 
 // handleLoadConst handles the LOAD_CONST opcode
-func (exec *Executor) handleLoadConst(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleLoadConst(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	stack.Push(instr.Arg)
 	return pc + 1, nil
 }
 
 // handleLoadName handles the LOAD_NAME opcode
-func (exec *Executor) handleLoadName(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleLoadName(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	name, ok := instr.Arg.(string)
 	if !ok {
 		return 0, fmt.Errorf("invalid argument for LOAD_NAME")
@@ -147,7 +152,7 @@ func (exec *Executor) handleLoadName(ctx *execContext.Context, stack *Stack, ins
 			fieldName := parts[1]
 
 			// Look up the variable (struct) in the context hierarchy
-			structValue, exists := ctx.GetVariable(varName)
+			structValue, exists := exec.vm.currentCtx.GetVariable(varName)
 			if !exists {
 				return 0, fmt.Errorf("undefined variable: %s", varName)
 			}
@@ -169,7 +174,7 @@ func (exec *Executor) handleLoadName(ctx *execContext.Context, stack *Stack, ins
 	}
 
 	// Look up the variable in the context hierarchy
-	value, exists := ctx.GetVariable(name)
+	value, exists := exec.vm.currentCtx.GetVariable(name)
 	if !exists {
 		// Check if it's a module reference
 		// In this case, we should return the module name itself as a string
@@ -187,7 +192,7 @@ func (exec *Executor) handleLoadName(ctx *execContext.Context, stack *Stack, ins
 }
 
 // handleStoreName handles the STORE_NAME opcode
-func (exec *Executor) handleStoreName(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleStoreName(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	name, ok := instr.Arg.(string)
 	if !ok {
 		return 0, fmt.Errorf("invalid argument for STORE_NAME")
@@ -198,17 +203,20 @@ func (exec *Executor) handleStoreName(ctx *execContext.Context, stack *Stack, in
 	}
 
 	value := stack.Pop()
-	// Check if variable exists, if not create it in current context
-	if !ctx.HasVariable(name) {
-		ctx.CreateVariableWithType(name, value, "unknown")
-	} else {
-		ctx.SetVariable(name, value)
+
+	// For function parameters, they might already have values set by the caller
+	// We should update the value, not create a new variable
+	err := exec.vm.currentCtx.SetVariable(name, value)
+	if err != nil {
+		// If setting fails, try to create the variable
+		exec.vm.currentCtx.CreateVariableWithType(name, value, "unknown")
 	}
+
 	return pc + 1, nil
 }
 
 // handlePop handles the POP opcode
-func (exec *Executor) handlePop(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handlePop(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	if stack.Len() < 1 {
 		return 0, fmt.Errorf("stack underflow")
 	}
@@ -217,7 +225,7 @@ func (exec *Executor) handlePop(ctx *execContext.Context, stack *Stack, instr *i
 }
 
 // handleCall handles the CALL opcode
-func (exec *Executor) handleCall(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleCall(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	vm := exec.vm
 	funcName, ok := instr.Arg.(string)
 	if !ok {
@@ -231,15 +239,15 @@ func (exec *Executor) handleCall(ctx *execContext.Context, stack *Stack, instr *
 
 	// Check if this is a method call (contains a dot)
 	if strings.Contains(funcName, ".") {
-		return exec.handleMethodCall(ctx, stack, vm, funcName, argCount, pc)
+		return exec.handleMethodCall(stack, vm, funcName, argCount, pc)
 	}
 
 	// Handle regular function calls
-	return exec.handleFunctionCall(ctx, stack, vm, funcName, argCount, pc)
+	return exec.handleFunctionCall(stack, vm, funcName, argCount, pc)
 }
 
 // handleMethodCall handles method calls with format "receiver.method" or "*type.method"
-func (exec *Executor) handleMethodCall(ctx *execContext.Context, stack *Stack, vm *VM, funcName string, argCount int, pc int) (int, error) {
+func (exec *Executor) handleMethodCall(stack *Stack, vm *VM, funcName string, argCount int, pc int) (int, error) {
 	// Prepare arguments
 	if stack.Len() < argCount {
 		return 0, fmt.Errorf("stack underflow when calling method %s", funcName)
@@ -253,17 +261,17 @@ func (exec *Executor) handleMethodCall(ctx *execContext.Context, stack *Stack, v
 	// Check if this is a method call with a qualified name that includes pointer type
 	// e.g., "*Rectangle.SetHeight"
 	if strings.Contains(funcName, "*") {
-		return exec.handlePointerMethodCall(ctx, stack, vm, funcName, args, pc)
+		return exec.handlePointerMethodCall(stack, vm, funcName, args, pc)
 	}
 
 	// This looks like a method call with a variable name as the receiver
 	// e.g., "rect.SetWidth" where "rect" is a variable name
 	// We need to look up the variable to get its type and then find the correct method
-	return exec.handleReceiverMethodCall(ctx, stack, vm, funcName, args, pc)
+	return exec.handleReceiverMethodCall(stack, vm, funcName, args, pc)
 }
 
 // handlePointerMethodCall handles method calls with pointer receiver format "*type.method"
-func (exec *Executor) handlePointerMethodCall(ctx *execContext.Context, stack *Stack, vm *VM, funcName string, args []interface{}, pc int) (int, error) {
+func (exec *Executor) handlePointerMethodCall(stack *Stack, vm *VM, funcName string, args []interface{}, pc int) (int, error) {
 	// Check if it's a registered script function with the qualified name
 	if fn, exists := vm.GetFunction(funcName); exists {
 		// Call the method
@@ -286,7 +294,7 @@ func (exec *Executor) handlePointerMethodCall(ctx *execContext.Context, stack *S
 		// Get the method name (part after the last dot)
 		parts := strings.Split(funcName, ".")
 		methodName := parts[len(parts)-1]
-		methodCtx := execContext.NewContext(methodName, ctx)
+		methodCtx := execContext.NewContext(methodName, vm.currentCtx)
 
 		// Set method arguments as local variables
 		// Try to get parameter names from registered script function info
@@ -318,7 +326,7 @@ func (exec *Executor) handlePointerMethodCall(ctx *execContext.Context, stack *S
 
 		// Execute the method using a new executor
 		newExec := NewExecutor(vm)
-		result, err := newExec.executeInstructions(functionInstructions, methodCtx)
+		result, err := newExec.executeInstructions(functionInstructions)
 		if err != nil {
 			return 0, fmt.Errorf("error executing method %s: %w", funcName, err)
 		}
@@ -334,7 +342,7 @@ func (exec *Executor) handlePointerMethodCall(ctx *execContext.Context, stack *S
 }
 
 // handleReceiverMethodCall handles method calls with receiver variable format "variable.method"
-func (exec *Executor) handleReceiverMethodCall(ctx *execContext.Context, stack *Stack, vm *VM, funcName string, args []interface{}, pc int) (int, error) {
+func (exec *Executor) handleReceiverMethodCall(stack *Stack, vm *VM, funcName string, args []interface{}, pc int) (int, error) {
 	// Split the function name to get receiver variable and method name
 	parts := strings.Split(funcName, ".")
 	if len(parts) != 2 {
@@ -351,7 +359,7 @@ func (exec *Executor) handleReceiverMethodCall(ctx *execContext.Context, stack *
 	}
 
 	// Look up the receiver variable to get its type
-	receiver, exists := ctx.GetVariable(receiverVarName)
+	receiver, exists := vm.currentCtx.GetVariable(receiverVarName)
 	if !exists {
 		return 0, fmt.Errorf("undefined variable: %s", receiverVarName)
 	}
@@ -370,7 +378,7 @@ func (exec *Executor) handleReceiverMethodCall(ctx *execContext.Context, stack *
 
 	// Check if it's a script-defined method
 	if _, exists := vm.GetInstructionSet(qualifiedMethodName); exists {
-		return exec.callScriptDefinedMethod(ctx, stack, vm, qualifiedMethodName, args, pc, typeName, methodName)
+		return exec.callScriptDefinedMethod(stack, vm, qualifiedMethodName, args, pc, typeName, methodName)
 	}
 
 	// If we can't find the qualified method, try to find it as a regular function
@@ -476,7 +484,7 @@ func (exec *Executor) callRegisteredMethod(fn ScriptFunction, qualifiedMethodNam
 }
 
 // callScriptDefinedMethod calls a script-defined method
-func (exec *Executor) callScriptDefinedMethod(ctx *execContext.Context, stack *Stack, vm *VM, qualifiedMethodName string, args []interface{}, pc int, typeName, methodName string) (int, error) {
+func (exec *Executor) callScriptDefinedMethod(stack *Stack, vm *VM, qualifiedMethodName string, args []interface{}, pc int, typeName, methodName string) (int, error) {
 	// Check if it's a script-defined method
 	functionInstructions, exists := vm.GetInstructionSet(qualifiedMethodName)
 	if !exists {
@@ -484,7 +492,7 @@ func (exec *Executor) callScriptDefinedMethod(ctx *execContext.Context, stack *S
 	}
 
 	// Create new context for the method call
-	methodCtx := execContext.NewContext(methodName, ctx)
+	methodCtx := execContext.NewContext(methodName, vm.currentCtx)
 
 	// Set method arguments as local variables
 	// Try to get parameter names from registered script function info
@@ -545,7 +553,9 @@ func (exec *Executor) callScriptDefinedMethod(ctx *execContext.Context, stack *S
 
 	// Execute the method using a new executor
 	newExec := NewExecutor(vm)
-	result, err := newExec.executeInstructions(functionInstructions, methodCtx)
+	// Set the current context for the method execution
+	vm.currentCtx = methodCtx
+	result, err := newExec.executeInstructions(functionInstructions)
 	if err != nil {
 		return 0, fmt.Errorf("error executing method %s: %w", qualifiedMethodName, err)
 	}
@@ -558,7 +568,7 @@ func (exec *Executor) callScriptDefinedMethod(ctx *execContext.Context, stack *S
 }
 
 // handleFunctionCall handles regular function calls
-func (exec *Executor) handleFunctionCall(ctx *execContext.Context, stack *Stack, vm *VM, funcName string, argCount int, pc int) (int, error) {
+func (exec *Executor) handleFunctionCall(stack *Stack, vm *VM, funcName string, argCount int, pc int) (int, error) {
 	// Check if it's a registered script function
 	if fn, exists := vm.GetFunction(funcName); exists {
 		// Prepare arguments
@@ -586,14 +596,14 @@ func (exec *Executor) handleFunctionCall(ctx *execContext.Context, stack *Stack,
 
 	// Check if it's a script-defined function (by key)
 	if _, exists := vm.GetInstructionSet(funcName); exists {
-		return exec.callScriptDefinedFunction(ctx, stack, vm, funcName, argCount, pc)
+		return exec.callScriptDefinedFunction(stack, vm, funcName, argCount, pc)
 	}
 
 	return 0, fmt.Errorf("undefined function: %s", funcName)
 }
 
 // callScriptDefinedFunction calls a script-defined function
-func (exec *Executor) callScriptDefinedFunction(ctx *execContext.Context, stack *Stack, vm *VM, funcName string, argCount int, pc int) (int, error) {
+func (exec *Executor) callScriptDefinedFunction(stack *Stack, vm *VM, funcName string, argCount int, pc int) (int, error) {
 	// Prepare arguments
 	if stack.Len() < argCount {
 		return 0, fmt.Errorf("stack underflow when calling function %s", funcName)
@@ -601,7 +611,7 @@ func (exec *Executor) callScriptDefinedFunction(ctx *execContext.Context, stack 
 
 	// Create new context for the function call
 	// The function context's parent is the current context
-	functionCtx := execContext.NewContext(funcName, ctx)
+	functionCtx := execContext.NewContext(funcName, exec.vm.currentCtx)
 
 	// Set function arguments as local variables
 	args := make([]interface{}, argCount)
@@ -656,8 +666,19 @@ func (exec *Executor) callScriptDefinedFunction(ctx *execContext.Context, stack 
 		return 0, fmt.Errorf("undefined function: %s", funcName)
 	}
 
+	// Save the current context
+	previousCtx := vm.currentCtx
+
+	// Set the current context for the function execution
+	vm.currentCtx = functionCtx
+
+	// Execute the function
 	newExec := NewExecutor(vm)
-	result, err := newExec.executeInstructions(functionInstructions, functionCtx) // No security context for nested calls
+	result, err := newExec.executeInstructions(functionInstructions)
+
+	// Restore the previous context
+	vm.currentCtx = previousCtx
+
 	if err != nil {
 		return 0, fmt.Errorf("error executing function %s: %w", funcName, err)
 	}
@@ -701,7 +722,7 @@ func (exec *Executor) callModuleFunction(moduleName, functionName string, args .
 }
 
 // handleReturn handles the RETURN opcode
-func (exec *Executor) handleReturn(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleReturn(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	// Return the top of stack if it exists
 	if stack.Len() > 0 {
 		// We use a special error value to return the result
@@ -711,7 +732,7 @@ func (exec *Executor) handleReturn(ctx *execContext.Context, stack *Stack, instr
 }
 
 // handleBinaryOp handles the BINARY_OP opcode
-func (exec *Executor) handleBinaryOp(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleBinaryOp(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	vm := exec.vm
 	op, ok := instr.Arg.(instruction.BinaryOp)
 	if !ok {
@@ -735,46 +756,38 @@ func (exec *Executor) handleBinaryOp(ctx *execContext.Context, stack *Stack, ins
 }
 
 // handleCreateVar handles the CREATE_VAR opcode
-func (exec *Executor) handleCreateVar(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleCreateVar(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	name, ok := instr.Arg.(string)
 	if !ok {
 		return 0, fmt.Errorf("invalid variable name")
 	}
 
-	// For variable declaration (:=), we should always create the variable in the current context
-	// regardless of whether it exists in parent scopes
-	// This is the correct behavior for Go's short variable declaration
-
-	// However, for function parameters, we need special handling
-	// If the variable already exists in the current context and has a non-nil value,
-	// it's likely a function parameter, so we shouldn't overwrite it
-	if value, exists := ctx.GetVariable(name); exists && value != nil {
-		// Variable already exists with a value in current context
-		// This is likely a function parameter, so don't overwrite it
-		return pc + 1, nil
-	}
-
-	ctx.CreateVariableWithType(name, nil, "unknown")
+	// Create the variable with nil initial value
+	exec.vm.currentCtx.CreateVariableWithType(name, nil, "unknown")
 	return pc + 1, nil
 }
 
 // handleEnterScopeWithKey handles the ENTER_SCOPE_WITH_KEY opcode
-func (exec *Executor) handleEnterScopeWithKey(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleEnterScopeWithKey(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	// For now, we just increment the program counter
 	// In a more advanced implementation, we might manage nested scopes
 	// todo newctx to replage old ctx
+	ctx := execContext.NewContext("", exec.vm.currentCtx)
+	exec.vm.currentCtx = ctx
 	return pc + 1, nil
 }
 
 // handleExitScopeWithKey handles the EXIT_SCOPE_WITH_KEY opcode
-func (exec *Executor) handleExitScopeWithKey(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleExitScopeWithKey(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	// For now, we just increment the program counter
 	// In a more advanced implementation, we might manage nested scopes
+	ctx := exec.vm.currentCtx.GetParent()
+	exec.vm.currentCtx = ctx
 	return pc + 1, nil
 }
 
 // handleGetIndex handles the GET_INDEX opcode
-func (exec *Executor) handleGetIndex(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleGetIndex(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	if stack.Len() < 2 {
 		return 0, fmt.Errorf("stack underflow for GET_INDEX")
 	}
@@ -815,7 +828,7 @@ func (exec *Executor) handleGetIndex(ctx *execContext.Context, stack *Stack, ins
 }
 
 // handleSetIndex handles the SET_INDEX opcode
-func (exec *Executor) handleSetIndex(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleSetIndex(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	if stack.Len() < 3 {
 		return 0, fmt.Errorf("stack underflow for SET_INDEX")
 	}
@@ -852,7 +865,7 @@ func (exec *Executor) handleSetIndex(ctx *execContext.Context, stack *Stack, ins
 }
 
 // handleJump handles the JUMP opcode
-func (exec *Executor) handleJump(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleJump(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	target, ok := instr.Arg.(int)
 	if !ok {
 		return 0, fmt.Errorf("invalid jump target")
@@ -861,7 +874,7 @@ func (exec *Executor) handleJump(ctx *execContext.Context, stack *Stack, instr *
 }
 
 // handleJumpIf handles the JUMP_IF opcode
-func (exec *Executor) handleJumpIf(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleJumpIf(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	target, ok := instr.Arg.(int)
 	if !ok {
 		return 0, fmt.Errorf("invalid jump target")
@@ -904,7 +917,7 @@ func isTruthy(value interface{}) bool {
 }
 
 // handleNewSlice handles the NEW_SLICE opcode
-func (exec *Executor) handleNewSlice(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleNewSlice(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	size, ok := instr.Arg.(int)
 	if !ok {
 		return 0, fmt.Errorf("invalid size for NEW_SLICE")
@@ -917,7 +930,7 @@ func (exec *Executor) handleNewSlice(ctx *execContext.Context, stack *Stack, ins
 }
 
 // handleLen handles the LEN opcode
-func (exec *Executor) handleLen(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleLen(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	if stack.Len() < 1 {
 		return 0, fmt.Errorf("stack underflow for LEN")
 	}
@@ -945,7 +958,7 @@ func (exec *Executor) handleLen(ctx *execContext.Context, stack *Stack, instr *i
 
 // handleRotate handles the ROTATE opcode
 // Changes [a, b, c] to [b, c, a]
-func (exec *Executor) handleRotate(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleRotate(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	if stack.Len() < 3 {
 		return 0, fmt.Errorf("stack underflow for ROTATE")
 	}
@@ -965,7 +978,7 @@ func (exec *Executor) handleRotate(ctx *execContext.Context, stack *Stack, instr
 
 // handleSwap handles the SWAP opcode
 // Changes [a, b] to [b, a]
-func (exec *Executor) handleSwap(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleSwap(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	if stack.Len() < 2 {
 		return 0, fmt.Errorf("stack underflow for SWAP")
 	}
@@ -982,15 +995,21 @@ func (exec *Executor) handleSwap(ctx *execContext.Context, stack *Stack, instr *
 }
 
 // handleNewStruct handles the NEW_STRUCT opcode
-func (exec *Executor) handleNewStruct(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleNewStruct(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	// Create a new struct (represented as a map)
 	structInstance := make(map[string]interface{})
+
+	// If there's a type name in the instruction argument, store it
+	if typeName, ok := instr.Arg.(string); ok && typeName != "" {
+		structInstance["_type"] = typeName
+	}
+
 	stack.Push(structInstance)
 	return pc + 1, nil
 }
 
 // handleSetField handles the SET_FIELD opcode
-func (exec *Executor) handleSetField(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleSetField(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	if stack.Len() < 2 {
 		return 0, fmt.Errorf("stack underflow for SET_FIELD, stack size: %d", stack.Len())
 	}
@@ -1022,7 +1041,7 @@ func (exec *Executor) handleSetField(ctx *execContext.Context, stack *Stack, ins
 		// Field exists directly, set it
 		structMap[fieldName] = value
 	} else {
-		// If the field doesn't exist directly, check for promoted fields in anonymous nested structs
+		// If the field doesn0't exist directly, check for promoted fields in anonymous nested structs
 		// In Go, when a struct has an anonymous field, its fields are promoted to the outer struct
 		fieldSet := false
 		for _, nestedStruct := range structMap {
@@ -1049,7 +1068,7 @@ func (exec *Executor) handleSetField(ctx *execContext.Context, stack *Stack, ins
 }
 
 // handleGetField handles the GET_FIELD opcode
-func (exec *Executor) handleGetField(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleGetField(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	if stack.Len() < 1 {
 		return 0, fmt.Errorf("stack underflow for GET_FIELD, stack size: %d", stack.Len())
 	}
@@ -1101,7 +1120,7 @@ func (exec *Executor) handleGetField(ctx *execContext.Context, stack *Stack, ins
 }
 
 // handleCallMethod handles the CALL_METHOD opcode
-func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	vm := exec.vm
 	methodName, ok := instr.Arg.(string)
 	if !ok {
@@ -1169,8 +1188,10 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 		}
 	}
 
+	fmt.Printf("Looking for registered function with key: %s\n", qualifiedMethodName)
 	// Try to find the method by looking for a registered function with the qualified name
 	if fn, exists := vm.GetFunction(qualifiedMethodName); exists {
+		fmt.Printf("Found registered function with key: %s\n", qualifiedMethodName)
 		// Prepare arguments including the receiver as the first argument
 		allArgs := make([]interface{}, len(args)+1)
 		allArgs[0] = receiver
@@ -1188,26 +1209,32 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 		}
 		fmt.Printf("Stack after CALL_METHOD %s (builtin): %v\n", methodName, stack.Items())
 		return pc + 1, nil
+	} else {
+		fmt.Printf("No registered function found with key: %s\n", qualifiedMethodName)
 	}
 
 	// Check if it's a script-defined method
 	// For script-defined methods, we need to find them by key
 	// The key would be something like "test.func.methodName"
 	// This is a simplified approach for testing purposes
+	// Try different function key patterns in order of preference
 	functionKeys := []string{
+		qualifiedMethodName, // Try the qualified method name first (e.g., "Rectangle.SetWidth")
+		fmt.Sprintf("*%s.%s", getStructTypeName(receiver), methodName), // Try pointer receiver (e.g., "*Rectangle.SetHeight")
 		fmt.Sprintf("test.func.%s", methodName),
 		fmt.Sprintf("main.func.%s", methodName),
-		qualifiedMethodName, // Try the qualified method name as a key
 	}
 
 	var functionInstructions []*instruction.Instruction
 	var found bool
+	var foundKey string
 
 	for _, key := range functionKeys {
 		fmt.Printf("Looking for function with key: %s\n", key)
 		if instructions, exists := vm.GetInstructionSet(key); exists {
 			functionInstructions = instructions
 			found = true
+			foundKey = key
 			fmt.Printf("Found function with key: %s, %d instructions\n", key, len(instructions))
 			break
 		}
@@ -1216,7 +1243,7 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 	if found {
 		// Create new context for the method call
 		// The method context's parent is the current context
-		methodCtx := execContext.NewContext(methodName, ctx)
+		methodCtx := execContext.NewContext(methodName, vm.currentCtx)
 
 		// Set method arguments as local variables
 		// The first argument is the receiver (usually named after the receiver parameter)
@@ -1226,9 +1253,12 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 
 		// For value receiver methods, we need to create a copy of the struct
 		// For pointer receiver methods, we use the original struct
-		// In this simplified implementation, we'll assume SetWidth is value receiver
-		// and SetHeight is pointer receiver based on the test
-		if methodName == "SetWidth" {
+		// Check if this is a pointer receiver method
+		isPointerReceiver := strings.HasPrefix(foundKey, "*")
+		fmt.Printf("Method %s is pointer receiver: %t\n", foundKey, isPointerReceiver)
+
+		// If it's a value receiver method, create a copy of the struct
+		if !isPointerReceiver {
 			// Create a copy of the struct for value receiver
 			if originalStruct, ok := receiver.(map[string]interface{}); ok {
 				structCopy := make(map[string]interface{})
@@ -1247,13 +1277,15 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 		// Try to get the actual parameter names from the registered script function
 		scriptFunctions := vm.GetAllScriptFunctions()
 		fmt.Printf("Script functions: %v\n", scriptFunctions)
+		foundParamNames := false
 		for name, fnInfo := range scriptFunctions {
 			// Check if this function matches our method name
 			fmt.Printf("Checking function %s: key=%s, paramNames=%v\n", name, fnInfo.Key, fnInfo.ParamNames)
-			if strings.HasSuffix(fnInfo.Key, "."+methodName) {
+			if fnInfo.Key == foundKey {
 				// Use the parameter names from the function info
 				if len(fnInfo.ParamNames) > 0 {
 					paramNames = fnInfo.ParamNames
+					foundParamNames = true
 				}
 				fmt.Printf("Using paramNames from %s: %v\n", name, paramNames)
 				break
@@ -1261,7 +1293,7 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 		}
 
 		// If we still have default parameter names, try to determine them based on method name
-		if len(paramNames) == 1 && paramNames[0] == "r" {
+		if !foundParamNames && len(paramNames) == 1 && paramNames[0] == "r" {
 			// Try to extract parameter names from the function key or method name
 			// For now, we'll use a heuristic approach
 			switch methodName {
@@ -1288,15 +1320,20 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 			}
 		}
 
+		// Make sure we have enough parameter names
+		for len(paramNames) < len(allArgs) {
+			paramNames = append(paramNames, fmt.Sprintf("arg%d", len(paramNames)-1))
+		}
+
 		for i, arg := range allArgs {
 			paramName := "unknown"
 			if i < len(paramNames) {
 				paramName = paramNames[i]
 			} else if i < 8 {
 				// Fallback to generic names a, b, c, etc.
-				paramNames := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
-				if i < len(paramNames) {
-					paramName = paramNames[i]
+				genericNames := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+				if i < len(genericNames) {
+					paramName = genericNames[i]
 				} else {
 					paramName = fmt.Sprintf("arg%d", i)
 				}
@@ -1311,7 +1348,14 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 
 		// Execute the method using a new executor
 		newExec := NewExecutor(vm)
-		result, err := newExec.executeInstructions(functionInstructions, methodCtx)
+		// Set the current context for the method execution
+		vm.currentCtx = methodCtx
+
+		// Debug information - print all variables in the method context
+		vars, _ := methodCtx.GetAllVariablesWithTypes()
+		fmt.Printf("Method context variables: %v\n", vars)
+
+		result, err := newExec.executeInstructions(functionInstructions)
 		if err != nil {
 			return 0, fmt.Errorf("error executing method %s: %w", methodName, err)
 		}
@@ -1321,6 +1365,7 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 			stack.Push(result)
 		}
 		fmt.Printf("Stack after CALL_METHOD %s (script): %v\n", methodName, stack.Items())
+		return pc + 1, nil
 	} else {
 		// Try to find the method by looking for a registered function
 		// This would be for built-in methods if we had any
@@ -1341,6 +1386,7 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 				stack.Push(result)
 			}
 			fmt.Printf("Stack after CALL_METHOD %s (builtin2): %v\n", methodName, stack.Items())
+			return pc + 1, nil
 		} else {
 			return 0, fmt.Errorf("undefined method: %s", methodName)
 		}
@@ -1349,8 +1395,27 @@ func (exec *Executor) handleCallMethod(ctx *execContext.Context, stack *Stack, i
 	return pc + 1, nil
 }
 
+// getStructTypeName extracts the type name from a struct receiver
+func getStructTypeName(receiver interface{}) string {
+	if structMap, ok := receiver.(map[string]interface{}); ok {
+		// First check for explicit type field
+		if typeName, exists := structMap["_type"]; exists {
+			if name, ok := typeName.(string); ok {
+				return name
+			}
+		}
+		// Fallback: try to infer from keys
+		for key := range structMap {
+			if key != "width" && key != "height" && key != "radius" && key != "_type" && key != "name" && key != "age" {
+				return key
+			}
+		}
+	}
+	return "unknown"
+}
+
 // handleImport handles the IMPORT opcode
-func (exec *Executor) handleImport(ctx *execContext.Context, stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+func (exec *Executor) handleImport(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
 	importPath, ok := instr.Arg.(string)
 	if !ok {
 		return 0, fmt.Errorf("invalid import path")
@@ -1364,7 +1429,7 @@ func (exec *Executor) handleImport(ctx *execContext.Context, stack *Stack, instr
 	// In the VM context, we can't directly access the module manager
 	// The module importing should be handled at the Script level
 	// For now, we'll just create a placeholder variable
-	ctx.CreateVariableWithType(pkgName, importPath, "module")
+	exec.vm.currentCtx.CreateVariableWithType(pkgName, importPath, "module")
 
 	return pc + 1, nil
 }

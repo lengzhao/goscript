@@ -17,6 +17,9 @@ type VM struct {
 	// Global context
 	GlobalCtx *context.Context
 
+	// Current context
+	currentCtx *context.Context
+
 	// All instructions (for compatibility with compiler tests)
 	instructions []*instruction.Instruction
 
@@ -34,6 +37,9 @@ type VM struct {
 
 	// Maximum number of instructions allowed (0 means no limit)
 	maxInstructions int64
+
+	// Debug mode
+	debug bool
 }
 
 // ScriptFunction represents a function that can be called from scripts
@@ -128,8 +134,14 @@ func (vm *VM) RegisterScriptFunction(name string, info *ScriptFunctionInfo) {
 		}
 
 		// For script-defined functions, we need to execute them in the proper context
-		// Create new context for the function call with no parent (standalone execution)
-		functionCtx := context.NewContext(info.Key, nil)
+		// If we already have a current context, use it as parent
+		// Otherwise create new context with no parent (standalone execution)
+		var functionCtx *context.Context
+		if vm.currentCtx != nil {
+			functionCtx = context.NewContext(info.Key, vm.currentCtx)
+		} else {
+			functionCtx = context.NewContext(info.Key, nil)
+		}
 
 		// Set function arguments as local variables using the actual parameter names
 		paramNames := make([]string, len(args))
@@ -158,9 +170,19 @@ func (vm *VM) RegisterScriptFunction(name string, info *ScriptFunctionInfo) {
 			functionCtx.CreateVariableWithType(paramName, arg, "unknown")
 		}
 
+		// Save the current context
+		previousCtx := vm.currentCtx
+
+		// Set the current context for the function execution
+		vm.currentCtx = functionCtx
+
 		// Execute the function instructions using the executor
 		executor := NewExecutor(vm)
-		result, err := executor.executeInstructions(instructions, functionCtx)
+		result, err := executor.executeInstructions(instructions)
+
+		// Restore the previous context
+		vm.currentCtx = previousCtx
+
 		return result, err
 	}
 }
@@ -218,11 +240,6 @@ func (vm *VM) AddInstruction(instr *instruction.Instruction) {
 // Execute runs the virtual machine with the given entry point
 // If entryPoint is empty, it defaults to "main.main" or tries to find another main function
 func (vm *VM) Execute(entryPoint string) (interface{}, error) {
-	return vm.ExecuteWithContext(entryPoint, nil)
-}
-
-// ExecuteWithContext runs the virtual machine with the given entry point and execution context
-func (vm *VM) ExecuteWithContext(entryPoint string, execCtx *context.ExecutionContext) (interface{}, error) {
 	// Reset instruction count before execution
 	vm.ResetInstructionCount()
 
@@ -259,8 +276,9 @@ func (vm *VM) ExecuteWithContext(entryPoint string, execCtx *context.ExecutionCo
 	// First, execute package-level code (init, global variable creation, etc.)
 	// This would typically be in "packageName.init" or similar
 	if initInstructions, exists := vm.GetInstructionSet(packageName + ".init"); exists {
+		vm.currentCtx = packageCtx
 		executor := NewExecutor(vm)
-		if _, err := executor.executeInstructions(initInstructions, packageCtx); err != nil {
+		if _, err := executor.executeInstructions(initInstructions); err != nil {
 			return nil, fmt.Errorf("error executing package init: %w", err)
 		}
 	}
@@ -273,13 +291,24 @@ func (vm *VM) ExecuteWithContext(entryPoint string, execCtx *context.ExecutionCo
 
 	// Create function context with package context as parent
 	functionCtx := context.NewContext(entryPoint, packageCtx)
+	vm.currentCtx = functionCtx
 
 	// Execute the function using the executor
 	executor := NewExecutor(vm)
-	result, err := executor.executeInstructions(instructions, functionCtx)
+	result, err := executor.executeInstructions(instructions)
 
 	// Return result and error
 	return result, err
+}
+
+// SetDebug enables or disables debug mode
+func (vm *VM) SetDebug(debug bool) {
+	vm.debug = debug
+}
+
+// GetDebug returns the current debug mode
+func (vm *VM) GetDebug() bool {
+	return vm.debug
 }
 
 // executeBinaryOp executes a binary operation

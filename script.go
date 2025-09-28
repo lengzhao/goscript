@@ -10,7 +10,6 @@ import (
 
 	"github.com/lengzhao/goscript/builtin"
 	"github.com/lengzhao/goscript/compiler"
-	execContext "github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/module"
 	"github.com/lengzhao/goscript/parser"
 	"github.com/lengzhao/goscript/runtime"
@@ -24,9 +23,6 @@ type Script struct {
 
 	// Module manager
 	moduleManager *module.ModuleManager
-
-	// Global execution context
-	globalContext *execContext.ExecutionContext
 
 	// Virtual machine
 	vm *vm.VM
@@ -56,7 +52,6 @@ func NewScript(source []byte) *Script {
 	script := &Script{
 		source:          source,
 		moduleManager:   module.NewModuleManager(),
-		globalContext:   execContext.NewExecutionContext(),
 		vm:              vm.NewVM(),
 		runtime:         runtime.NewRuntime(),
 		debug:           false,
@@ -84,17 +79,17 @@ func (s *Script) SetMaxInstructions(max int64) {
 
 // AddVariable adds a variable to the script
 func (s *Script) AddVariable(name string, value interface{}) error {
-	return s.globalContext.SetValue(name, value)
+	return s.vm.GlobalCtx.CreateVariableWithType(name, value, "unknow")
 }
 
 // GetVariable gets a variable from the script
 func (s *Script) GetVariable(name string) (interface{}, bool) {
-	return s.globalContext.GetValue(name)
+	return s.vm.GlobalCtx.GetVariable(name)
 }
 
 // SetVariable sets a variable in the script
 func (s *Script) SetVariable(name string, value interface{}) error {
-	return s.globalContext.SetValue(name, value)
+	return s.vm.GlobalCtx.SetVariable(name, value)
 }
 
 // AddFunction adds a function to the script
@@ -144,19 +139,6 @@ func (s *Script) callFunctionInContext(name string, args ...interface{}) (interf
 		}
 	}
 
-	// Try to call the function in the global context
-	if fn, exists := s.globalContext.GetFunction(name); exists {
-		result, err := fn(args...)
-		if s.debug {
-			if err != nil {
-				fmt.Printf("Script: Error calling function %s: %v\n", name, err)
-			} else {
-				fmt.Printf("Script: Called function %s, result: %v\n", name, result)
-			}
-		}
-		return result, err
-	}
-
 	// Try to call the function from the VM (functions registered via AddFunction)
 	if fn, exists := s.vm.GetFunction(name); exists {
 		result, err := fn(args...)
@@ -199,14 +181,6 @@ func (s *Script) Run() (interface{}, error) {
 func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	fmt.Println("RunContext: Starting execution")
 	startTime := time.Now()
-
-	// Use the global context
-	execCtx := s.globalContext
-
-	// Apply timeout if set
-	if execCtx.Security != nil && execCtx.Security.MaxExecutionTime > 0 {
-		execCtx = execCtx.WithTimeout(execCtx.Security.MaxExecutionTime)
-	}
 
 	// Parse and compile the source code
 	sourceStr := string(s.source)
@@ -253,9 +227,9 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	// Set max instructions in VM
 	s.vm.SetMaxInstructions(s.maxInstructions)
 
-	// Execute the VM with the execution context
+	// Execute the VM
 	fmt.Println("RunContext: Executing VM")
-	result, err := s.vm.ExecuteWithContext("", execCtx)
+	result, err := s.vm.Execute("")
 	fmt.Printf("RunContext: VM execution completed, result: %v, err: %v\n", result, err)
 
 	// Update execution statistics
@@ -285,11 +259,6 @@ func (s *Script) ImportModule(moduleNames ...string) error {
 	return nil
 }
 
-// GetGlobalContext returns the global execution context
-func (s *Script) GetGlobalContext() *execContext.ExecutionContext {
-	return s.globalContext
-}
-
 // GetModuleManager returns the module manager
 func (s *Script) GetModuleManager() *module.ModuleManager {
 	return s.moduleManager
@@ -304,8 +273,7 @@ func (s *Script) String() string {
 // SetDebug enables or disables debug mode
 func (s *Script) SetDebug(debug bool) {
 	s.debug = debug
-	// s.vm.SetDebug(debug)
-	s.globalContext.SetDebug(debug)
+	s.vm.SetDebug(debug)
 	s.moduleManager.SetDebug(debug)
 	s.runtime.SetDebug(debug)
 }
