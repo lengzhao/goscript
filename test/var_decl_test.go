@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/lengzhao/goscript/compiler"
-	execContext "github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/parser"
 	"github.com/lengzhao/goscript/vm"
 )
@@ -13,11 +12,8 @@ func TestVariableDeclaration(t *testing.T) {
 	// Create a new VM
 	v := vm.NewVM()
 
-	// Create execution context
-	execCtx := execContext.NewExecutionContext()
-
 	// Create compiler
-	c := compiler.NewCompiler(v, execCtx)
+	c := compiler.NewCompiler(v)
 
 	// Create a parser
 	p := parser.New()
@@ -46,7 +42,7 @@ func main() {
 	}
 
 	// Execute the compiled code
-	_, err = v.Execute(nil)
+	_, err = v.Execute("")
 	if err != nil {
 		t.Fatalf("Failed to execute compiled code: %v", err)
 	}

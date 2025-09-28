@@ -4,7 +4,8 @@ package goscript
 import (
 	"context"
 	"fmt"
-	"strings"
+	"go/ast"
+	"go/token"
 	"time"
 
 	"github.com/lengzhao/goscript/builtin"
@@ -38,6 +39,9 @@ type Script struct {
 
 	// Execution statistics
 	executionStats *ExecutionStats
+
+	// Maximum number of instructions allowed (0 means no limit)
+	maxInstructions int64
 }
 
 // ExecutionStats holds execution statistics
@@ -47,19 +51,17 @@ type ExecutionStats struct {
 	ErrorCount       int
 }
 
-// SecurityContext defines security restrictions
-type SecurityContext execContext.SecurityContext
-
 // NewScript creates a new script
 func NewScript(source []byte) *Script {
 	script := &Script{
-		source:         source,
-		moduleManager:  module.NewModuleManager(),
-		globalContext:  execContext.NewExecutionContext(),
-		vm:             vm.NewVM(),
-		runtime:        runtime.NewRuntime(),
-		debug:          false,
-		executionStats: &ExecutionStats{},
+		source:          source,
+		moduleManager:   module.NewModuleManager(),
+		globalContext:   execContext.NewExecutionContext(),
+		vm:              vm.NewVM(),
+		runtime:         runtime.NewRuntime(),
+		debug:           false,
+		executionStats:  &ExecutionStats{},
+		maxInstructions: 10000, // Default limit of 10,000 instructions
 	}
 
 	// Register builtin functions with the VM
@@ -74,12 +76,10 @@ func NewScript(source []byte) *Script {
 	return script
 }
 
-// SetSecurityContext sets the security context
-func (s *Script) SetSecurityContext(securityCtx *execContext.SecurityContext) {
-	s.globalContext.Security = securityCtx
-
-	// Also set it in the module manager's global context
-	s.moduleManager.GetGlobalContext().Security = securityCtx
+// SetMaxInstructions sets the maximum number of instructions allowed
+func (s *Script) SetMaxInstructions(max int64) {
+	s.maxInstructions = max
+	s.vm.SetMaxInstructions(max)
 }
 
 // AddVariable adds a variable to the script
@@ -98,12 +98,7 @@ func (s *Script) SetVariable(name string, value interface{}) error {
 }
 
 // AddFunction adds a function to the script
-func (s *Script) AddFunction(name string, execFn execContext.Function) error {
-	// Register the function in the global context
-	err := s.globalContext.RegisterFunction(name, execFn)
-	if err != nil {
-		return err
-	}
+func (s *Script) AddFunction(name string, execFn vm.ScriptFunction) error {
 
 	// Also register with the VM directly for immediate use
 	s.vm.RegisterFunction(name, execFn)
@@ -162,6 +157,19 @@ func (s *Script) callFunctionInContext(name string, args ...interface{}) (interf
 		return result, err
 	}
 
+	// Try to call the function from the VM (functions registered via AddFunction)
+	if fn, exists := s.vm.GetFunction(name); exists {
+		result, err := fn(args...)
+		if s.debug {
+			if err != nil {
+				fmt.Printf("Script: Error calling VM function %s: %v\n", name, err)
+			} else {
+				fmt.Printf("Script: Called VM function %s, result: %v\n", name, result)
+			}
+		}
+		return result, err
+	}
+
 	// Try to call the function in the current module
 	currentModule, exists := s.moduleManager.GetCurrentModule()
 	if exists {
@@ -195,47 +203,13 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 	// Use the global context
 	execCtx := s.globalContext
 
-	// Apply security context timeout if set
+	// Apply timeout if set
 	if execCtx.Security != nil && execCtx.Security.MaxExecutionTime > 0 {
 		execCtx = execCtx.WithTimeout(execCtx.Security.MaxExecutionTime)
-		// Also update the global context reference to use the new context with timeout
-		s.globalContext = execCtx
 	}
 
-	// Create a module for the script
-	scriptModule := module.NewModule("main")
-	scriptModule.SetDebug(s.debug)
-
-	// Register the module
-	s.moduleManager.RegisterModule(scriptModule)
-
-	// Set the current module
-	s.moduleManager.SetCurrentModule("main")
-
-	// Clear any existing instructions
-	s.vm = vm.NewVM()
-	s.vm.SetDebug(s.debug)
-	s.vm.SetModuleManager(s.moduleManager) // 设置模块管理器引用
-
-	// Set maximum instruction limit from security context
-	if execCtx.Security != nil && execCtx.Security.MaxInstructions > 0 {
-		s.vm.SetMaxInstructions(execCtx.Security.MaxInstructions)
-	}
-
-	// Register builtin functions with the VM
-	for name, fn := range builtin.BuiltInFunctions {
-		s.vm.RegisterFunction(name, func(f builtin.Function) func(args ...interface{}) (interface{}, error) {
-			return func(args ...interface{}) (interface{}, error) {
-				return f(args...)
-			}
-		}(fn))
-	}
-
-	// Generate bytecode based on source content
-	// This is a simplified compilation process for demonstration purposes
+	// Parse and compile the source code
 	sourceStr := string(s.source)
-
-	fmt.Printf("RunContext: Source code:\n%s\n", sourceStr)
 
 	// Create a parser
 	parser := parser.New()
@@ -246,8 +220,29 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 		return nil, fmt.Errorf("failed to parse source code: %w", err)
 	}
 
+	// Process import declarations before compilation
+	for _, decl := range astFile.Decls {
+		if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok == token.IMPORT {
+			for _, spec := range genDecl.Specs {
+				if importSpec, ok := spec.(*ast.ImportSpec); ok {
+					// Get the import path (remove quotes)
+					path := importSpec.Path.Value
+					if len(path) > 2 {
+						path = path[1 : len(path)-1] // Remove quotes
+					}
+
+					// Import the module
+					err := s.ImportModule(path)
+					if err != nil {
+						return nil, fmt.Errorf("failed to import module %s: %w", path, err)
+					}
+				}
+			}
+		}
+	}
+
 	// Create a compiler instance
-	compiler := compiler.NewCompiler(s.vm, s.globalContext)
+	compiler := compiler.NewCompiler(s.vm)
 
 	// Compile the AST to bytecode
 	err = compiler.Compile(astFile)
@@ -255,79 +250,28 @@ func (s *Script) RunContext(ctx context.Context) (interface{}, error) {
 		return nil, fmt.Errorf("failed to compile AST: %w", err)
 	}
 
-	// After compiling, we know which modules are needed
-	// Import all needed modules
-	neededModules := compiler.GetImports()
-	fmt.Printf("Needed modules: %v\n", neededModules)
+	// Set max instructions in VM
+	s.vm.SetMaxInstructions(s.maxInstructions)
 
-	// Import all needed modules
-	for _, modulePath := range neededModules {
-		// Extract module name from path
-		parts := strings.Split(modulePath, "/")
-		moduleName := parts[len(parts)-1]
-
-		// Import the module
-		err := s.moduleManager.ImportModule(moduleName)
-		if err != nil {
-			// If the module doesn't exist, continue to the next one
-			fmt.Printf("Failed to import module %s: %v\n", moduleName, err)
-			continue
-		}
-		fmt.Printf("Successfully imported module %s\n", moduleName)
-	}
-
-	// Register any functions that were added via AddFunction
-	// We need to get all functions from the execution context
-	if rootCtx := execCtx.GetRootContext(); rootCtx != nil {
-		// Get all functions from the scope manager
-		allFunctions := rootCtx.ScopeManager.GetAllFunctions()
-		for name, fn := range allFunctions {
-			// Register each function with the VM
-			s.vm.RegisterFunction(name, fn)
-		}
-	}
-
-	// Execute the VM
+	// Execute the VM with the execution context
 	fmt.Println("RunContext: Executing VM")
-	result, err := s.vm.Execute(nil)
+	result, err := s.vm.ExecuteWithContext("", execCtx)
 	fmt.Printf("RunContext: VM execution completed, result: %v, err: %v\n", result, err)
 
 	// Update execution statistics
 	s.executionStats.ExecutionTime = time.Since(startTime)
-	s.executionStats.InstructionCount = s.vm.GetExecutionCount()
 	if err != nil {
 		s.executionStats.ErrorCount++
 	}
+
+	// Get instruction count from VM
+	s.executionStats.InstructionCount = int(s.vm.GetInstructionCount())
 
 	if err != nil {
 		return nil, err
 	}
 
 	return result, nil
-}
-
-// compileSource generates bytecode instructions based on the source code content
-// This implementation parses the AST and generates proper bytecode
-func (s *Script) compileSource(sourceStr string) error {
-	// Create a parser
-	parser := parser.New()
-
-	// Parse the source code into an AST
-	astFile, err := parser.Parse("script.go", []byte(sourceStr), 0)
-	if err != nil {
-		return fmt.Errorf("failed to parse source code: %w", err)
-	}
-
-	// Create a compiler instance
-	compiler := compiler.NewCompiler(s.vm, s.globalContext)
-
-	// Compile the AST to bytecode
-	err = compiler.Compile(astFile)
-	if err != nil {
-		return fmt.Errorf("failed to compile AST: %w", err)
-	}
-
-	return nil
 }
 
 // ImportModule imports a module into the script
@@ -360,7 +304,7 @@ func (s *Script) String() string {
 // SetDebug enables or disables debug mode
 func (s *Script) SetDebug(debug bool) {
 	s.debug = debug
-	s.vm.SetDebug(debug)
+	// s.vm.SetDebug(debug)
 	s.globalContext.SetDebug(debug)
 	s.moduleManager.SetDebug(debug)
 	s.runtime.SetDebug(debug)

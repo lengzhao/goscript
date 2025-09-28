@@ -3,10 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
 
 	goscript "github.com/lengzhao/goscript"
-	execContext "github.com/lengzhao/goscript/context"
 )
 
 func main() {
@@ -26,17 +24,6 @@ func main() {
 	// Create a new script
 	script := goscript.NewScript(source)
 	script.SetDebug(true) // Enable debug mode
-
-	// Set security context with higher instruction limit
-	securityCtx := &execContext.SecurityContext{
-		MaxExecutionTime:  5 * time.Second,
-		MaxMemoryUsage:    10 * 1024 * 1024, // 10MB
-		AllowedModules:    []string{"fmt", "math"},
-		ForbiddenKeywords: []string{"unsafe"},
-		AllowCrossModule:  true,
-		MaxInstructions:   100000, // Increased instruction limit
-	}
-	script.SetSecurityContext(securityCtx)
 
 	// Run the script
 	result, err := script.Run()

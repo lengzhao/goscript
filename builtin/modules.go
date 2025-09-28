@@ -4,6 +4,7 @@ package builtin
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -139,6 +140,12 @@ var FmtModule = map[string]Function{
 		}
 		return fmt.Sprintf(format, args[1:]...), nil
 	},
+	"Println": func(args ...interface{}) (interface{}, error) {
+		// Print all arguments with spaces between them and a newline at the end
+		fmt.Println(args...)
+		// Return nil as Println doesn't return a value
+		return nil, nil
+	},
 	"Sprintf": func(args ...interface{}) (interface{}, error) {
 		if len(args) < 1 {
 			return nil, fmt.Errorf("sprintf function requires at least 1 argument")
@@ -154,6 +161,73 @@ var FmtModule = map[string]Function{
 			return nil, fmt.Errorf("sprint function requires at least 1 argument")
 		}
 		return fmt.Sprint(args...), nil
+	},
+}
+
+// Math module functions
+var MathModule = map[string]Function{
+	"Abs": func(args ...interface{}) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("abs function requires 1 argument")
+		}
+		switch v := args[0].(type) {
+		case int:
+			if v < 0 {
+				return -v, nil
+			}
+			return v, nil
+		case float64:
+			return math.Abs(v), nil
+		default:
+			return nil, fmt.Errorf("abs function requires numeric argument, got %T", v)
+		}
+	},
+	"Max": func(args ...interface{}) (interface{}, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("max function requires 2 arguments")
+		}
+		switch a := args[0].(type) {
+		case int:
+			if b, ok := args[1].(int); ok {
+				if a > b {
+					return a, nil
+				}
+				return b, nil
+			}
+		case float64:
+			if b, ok := args[1].(float64); ok {
+				return math.Max(a, b), nil
+			}
+		}
+		return nil, fmt.Errorf("max function requires numeric arguments of the same type")
+	},
+	"Min": func(args ...interface{}) (interface{}, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("min function requires 2 arguments")
+		}
+		switch a := args[0].(type) {
+		case int:
+			if b, ok := args[1].(int); ok {
+				if a < b {
+					return a, nil
+				}
+				return b, nil
+			}
+		case float64:
+			if b, ok := args[1].(float64); ok {
+				return math.Min(a, b), nil
+			}
+		}
+		return nil, fmt.Errorf("min function requires numeric arguments of the same type")
+	},
+	"Sqrt": func(args ...interface{}) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("sqrt function requires 1 argument")
+		}
+		if v, ok := args[0].(float64); ok {
+			return math.Sqrt(v), nil
+		}
+		return nil, fmt.Errorf("sqrt function requires float64 argument")
 	},
 }
 
@@ -195,6 +269,8 @@ func GetModuleFunctions(moduleName string) (map[string]Function, bool) {
 		return StringsModule, true
 	case "fmt":
 		return FmtModule, true
+	case "math":
+		return MathModule, true
 	case "json":
 		return JSONModule, true
 	default:
@@ -203,5 +279,5 @@ func GetModuleFunctions(moduleName string) (map[string]Function, bool) {
 }
 
 func ListAllModules() []string {
-	return []string{"strings", "fmt", "json"}
+	return []string{"strings", "fmt", "math", "json"}
 }

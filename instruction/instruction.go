@@ -141,6 +141,8 @@ func (op OpCode) String() string {
 		return "OpSetIndex"
 	case OpRotate:
 		return "OpRotate"
+	case OpSwap:
+		return "OpSwap"
 	case OpNewSlice:
 		return "OpNewSlice"
 	case OpLen:
@@ -253,6 +255,8 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("SET_INDEX %v", i.Arg)
 	case OpRotate:
 		return fmt.Sprintf("ROTATE %v", i.Arg)
+	case OpSwap:
+		return "SWAP"
 	case OpNewSlice:
 		return fmt.Sprintf("NEW_SLICE %v", i.Arg)
 	case OpLen:

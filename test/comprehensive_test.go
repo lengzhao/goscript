@@ -1,12 +1,67 @@
 package test
 
 import (
+	"context"
+	"fmt"
 	"testing"
-	"time"
 
 	goscript "github.com/lengzhao/goscript"
-	execContext "github.com/lengzhao/goscript/context"
 )
+
+func TestComprehensiveScriptExecution(t *testing.T) {
+	// 测试更复杂的脚本执行，包括变量声明、函数调用、控制流等
+	scriptSource := `
+package main
+
+func fibonacci(n int) int {
+	if n <= 1 {
+		return n
+	}
+	return fibonacci(n-1) + fibonacci(n-2)
+}
+
+func main() {
+	// 变量声明和赋值
+	a := 10
+	b := 20
+	c := a + b
+
+	// 函数调用
+	result := fibonacci(10)
+
+	// 控制流
+	if c > 25 {
+		return result * 2
+	} else {
+		return result
+	}
+}
+`
+
+	// 创建脚本
+	script := goscript.NewScript([]byte(scriptSource))
+
+	// 设置指令数限制
+	script.SetMaxInstructions(10000)
+
+	// 执行脚本
+	result, err := script.RunContext(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to execute script: %v", err)
+	}
+
+	// 验证结果
+	expected := 55 * 2 // fibonacci(10) = 55, c = 30 > 25, so return result * 2
+	if result != expected {
+		t.Errorf("Expected %d, but got %v", expected, result)
+	}
+
+	// 验证执行统计信息
+	stats := script.GetExecutionStats()
+	fmt.Printf("Execution time: %v\n", stats.ExecutionTime)
+	fmt.Printf("Instructions executed: %d\n", stats.InstructionCount)
+	fmt.Printf("Errors: %d\n", stats.ErrorCount)
+}
 
 // TestDebugMode tests the debug mode functionality
 func TestDebugMode(t *testing.T) {
@@ -79,35 +134,6 @@ func main() {
 
 	t.Logf("Execution stats: time=%v, instructions=%d, errors=%d, result=%v",
 		stats.ExecutionTime, stats.InstructionCount, stats.ErrorCount, result)
-}
-
-// TestSecurityContext tests the security context functionality
-func TestSecurityContext(t *testing.T) {
-	// Create script
-	script := goscript.NewScript([]byte(""))
-
-	// Set security context
-	securityCtx := &execContext.SecurityContext{
-		MaxExecutionTime:  1 * time.Second,
-		MaxMemoryUsage:    5 * 1024 * 1024, // 5MB
-		AllowedModules:    []string{"math"},
-		ForbiddenKeywords: []string{"unsafe"},
-		AllowCrossModule:  false,
-	}
-
-	script.SetSecurityContext(securityCtx)
-
-	// Get the global context and check security settings
-	globalCtx := script.GetGlobalContext()
-	if globalCtx.Security == nil {
-		t.Fatal("Security context should not be nil")
-	}
-
-	if globalCtx.Security.MaxExecutionTime != 1*time.Second {
-		t.Errorf("Expected MaxExecutionTime to be 1s, got %v", globalCtx.Security.MaxExecutionTime)
-	}
-
-	t.Log("Security context test passed")
 }
 
 // TestModuleFunctionality tests module-related functionality

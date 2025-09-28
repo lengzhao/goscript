@@ -4,10 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	goscript "github.com/lengzhao/goscript"
-	execContext "github.com/lengzhao/goscript/context"
 )
 
 func TestInstructionLimit(t *testing.T) {
@@ -28,15 +26,7 @@ func main() {
 	script := goscript.NewScript([]byte(scriptSource))
 
 	// 设置较小的指令数限制用于测试
-	securityCtx := &execContext.SecurityContext{
-		MaxExecutionTime:  5 * time.Second,
-		MaxMemoryUsage:    10 * 1024 * 1024, // 10MB
-		AllowedModules:    []string{"fmt", "math"},
-		ForbiddenKeywords: []string{"unsafe"},
-		AllowCrossModule:  true,
-		MaxInstructions:   1000, // 设置较小的指令数限制
-	}
-	script.SetSecurityContext((*execContext.SecurityContext)(securityCtx))
+	script.SetMaxInstructions(1000) // 设置较小的指令数限制
 
 	// 执行脚本
 	_, err := script.RunContext(context.Background())
@@ -81,15 +71,7 @@ func main() {
 	script := goscript.NewScript([]byte(scriptSource))
 
 	// 设置较小的指令数限制用于测试
-	securityCtx := &execContext.SecurityContext{
-		MaxExecutionTime:  5 * time.Second,
-		MaxMemoryUsage:    10 * 1024 * 1024, // 10MB
-		AllowedModules:    []string{"fmt", "math"},
-		ForbiddenKeywords: []string{"unsafe"},
-		AllowCrossModule:  true,
-		MaxInstructions:   1000, // 设置较小的指令数限制
-	}
-	script.SetSecurityContext((*execContext.SecurityContext)(securityCtx))
+	script.SetMaxInstructions(1000) // 设置较小的指令数限制
 
 	// 执行脚本
 	_, err := script.RunContext(context.Background())
@@ -126,15 +108,7 @@ func main() {
 	script := goscript.NewScript([]byte(scriptSource))
 
 	// 设置较大的指令数限制
-	securityCtx := &execContext.SecurityContext{
-		MaxExecutionTime:  5 * time.Second,
-		MaxMemoryUsage:    10 * 1024 * 1024, // 10MB
-		AllowedModules:    []string{"fmt", "math"},
-		ForbiddenKeywords: []string{"unsafe"},
-		AllowCrossModule:  true,
-		MaxInstructions:   1000, // 设置较小的指令数限制用于简单脚本
-	}
-	script.SetSecurityContext((*execContext.SecurityContext)(securityCtx))
+	script.SetMaxInstructions(1000) // 设置较小的指令数限制用于简单脚本
 
 	// 执行脚本
 	result, err := script.RunContext(context.Background())

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/lengzhao/goscript/compiler"
-	execContext "github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/parser"
 	"github.com/lengzhao/goscript/vm"
 )
@@ -13,13 +12,10 @@ import (
 func TestStructMethodCall(t *testing.T) {
 	// Create a new VM
 	vmInstance := vm.NewVM()
-	vmInstance.SetDebug(true) // Enable debug output
-
-	// Create a new execution context
-	execCtx := execContext.NewExecutionContext()
+	// vmInstance.SetDebug(true) // Enable debug output // Not implemented in current VM
 
 	// Create a new compiler
-	compiler := compiler.NewCompiler(vmInstance, execCtx)
+	compiler := compiler.NewCompiler(vmInstance)
 
 	// Parse the test script
 	parser := parser.New()
@@ -81,7 +77,7 @@ func main() {
 	}
 
 	// Execute the compiled code
-	result, err := vmInstance.Execute(nil)
+	result, err := vmInstance.Execute("")
 	if err != nil {
 		t.Fatalf("Failed to execute script: %v", err)
 	}
@@ -93,6 +89,6 @@ func main() {
 		t.Errorf("Expected result to be %d, got %d", expected, result)
 
 		// Print stack for debugging
-		t.Logf("Stack size: %d", vmInstance.StackSize())
+		// t.Logf("Stack size: %d", vmInstance.StackSize()) // Not implemented in current VM
 	}
 }

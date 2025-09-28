@@ -1,4 +1,4 @@
-// Package main provides a control flow example of using GoScript
+// Package main provides an advanced example of using GoScript
 package main
 
 import (

@@ -5,7 +5,6 @@ import (
 	"log"
 
 	goscript "github.com/lengzhao/goscript"
-	execContext "github.com/lengzhao/goscript/context"
 )
 
 func main() {
@@ -26,12 +25,6 @@ func example1() {
 	// Create a new script
 	script := goscript.NewScript([]byte(""))
 
-	// Set security context to allow strings module
-	securityCtx := &execContext.SecurityContext{
-		AllowedModules: []string{"strings"},
-	}
-	script.SetSecurityContext(securityCtx)
-
 	// Call strings module functions directly
 	result1, err := script.CallFunction("strings.toLower", "HELLO WORLD")
 	if err != nil {
@@ -51,12 +44,6 @@ func example1() {
 func example2() {
 	// Create a new script
 	script := goscript.NewScript([]byte(""))
-
-	// Set security context to allow json module
-	securityCtx := &execContext.SecurityContext{
-		AllowedModules: []string{"json"},
-	}
-	script.SetSecurityContext(securityCtx)
 
 	// Call json module functions directly
 	testMap := map[string]interface{}{
@@ -83,12 +70,6 @@ func example3() {
 	// Example of using modules via API
 	// Create a new script
 	script := goscript.NewScript([]byte(""))
-
-	// Set security context
-	securityCtx := &execContext.SecurityContext{
-		AllowedModules: []string{"strings", "json"},
-	}
-	script.SetSecurityContext(securityCtx)
 
 	// Import modules via API
 	err := script.ImportModule("strings")
