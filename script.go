@@ -12,7 +12,6 @@ import (
 	"github.com/lengzhao/goscript/compiler"
 	"github.com/lengzhao/goscript/module"
 	"github.com/lengzhao/goscript/parser"
-	"github.com/lengzhao/goscript/runtime"
 	"github.com/lengzhao/goscript/vm"
 )
 
@@ -26,9 +25,6 @@ type Script struct {
 
 	// Virtual machine
 	vm *vm.VM
-
-	// Runtime
-	runtime *runtime.Runtime
 
 	// Debug mode
 	debug bool
@@ -53,7 +49,6 @@ func NewScript(source []byte) *Script {
 		source:          source,
 		moduleManager:   module.NewModuleManager(),
 		vm:              vm.NewVM(),
-		runtime:         runtime.NewRuntime(),
 		debug:           false,
 		executionStats:  &ExecutionStats{},
 		maxInstructions: 10000, // Default limit of 10,000 instructions
@@ -275,7 +270,6 @@ func (s *Script) SetDebug(debug bool) {
 	s.debug = debug
 	s.vm.SetDebug(debug)
 	s.moduleManager.SetDebug(debug)
-	s.runtime.SetDebug(debug)
 }
 
 // GetExecutionStats returns execution statistics
@@ -286,9 +280,4 @@ func (s *Script) GetExecutionStats() *ExecutionStats {
 // GetVM returns the virtual machine
 func (s *Script) GetVM() *vm.VM {
 	return s.vm
-}
-
-// GetRuntime returns the runtime
-func (s *Script) GetRuntime() *runtime.Runtime {
-	return s.runtime
 }

@@ -75,18 +75,6 @@ func (c *Compiler) Compile(file *ast.File) error {
 		c.compileContext.SetInstructions(c.packageName, c.currentInstructions)
 	}
 
-	// Reset current instructions for function compilation
-	c.currentInstructions = make([]*instruction.Instruction, 0)
-
-	// Process other global declarations (variables, types, etc.)
-	for _, decl := range file.Decls {
-		if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok != token.IMPORT {
-			if err := c.compileGenDecl(genDecl); err != nil {
-				return err
-			}
-		}
-	}
-
 	// Process function declarations
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok {

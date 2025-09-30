@@ -177,27 +177,6 @@ func TestModuleFunctionality(t *testing.T) {
 	t.Log("Module functionality test passed")
 }
 
-// TestRuntimeFunctionality tests runtime-related functionality
-func TestRuntimeFunctionality(t *testing.T) {
-	// Create script
-	script := goscript.NewScript([]byte(""))
-
-	// Get runtime
-	runtime := script.GetRuntime()
-	if runtime == nil {
-		t.Fatal("Runtime should not be nil")
-	}
-
-	// Check runtime string representation
-	runtimeStr := runtime.String()
-	if runtimeStr == "" {
-		t.Error("Runtime string representation should not be empty")
-	}
-
-	t.Logf("Runtime: %s", runtimeStr)
-	t.Log("Runtime functionality test passed")
-}
-
 // TestComplexScriptExecution tests execution of a more complex script
 func TestComplexScriptExecution(t *testing.T) {
 	// Create a script that will produce a known result with our simplified execution
