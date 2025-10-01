@@ -1,11 +1,14 @@
-// Package types defines the type system for GoScript
+// Package types provides common type definitions for GoScript
 package types
 
 import (
 	"reflect"
 )
 
-// Function represents a callable function in GoScript
+// ModuleExecutor defines the interface for executing module entry points
+type ModuleExecutor func(entrypoint string, args ...interface{}) (interface{}, error)
+
+// Function represents a callable function
 type Function func(args ...interface{}) (interface{}, error)
 
 // Method represents a method signature

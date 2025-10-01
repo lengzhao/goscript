@@ -352,16 +352,10 @@ func (exec *Executor) handleReceiverMethodCall(stack *Stack, vm *VM, funcName st
 	receiverVarName := parts[0]
 	methodName := parts[1]
 
-	// Check if the receiver is a module name
-	// If so, this is a module function call
-	if exec.isModuleName(receiverVarName) {
-		return exec.handleModuleFunctionCall(receiverVarName, methodName, args, stack, pc)
-	}
-
 	// Look up the receiver variable to get its type
 	receiver, exists := vm.currentCtx.GetVariable(receiverVarName)
 	if !exists {
-		return 0, fmt.Errorf("undefined variable: %s", receiverVarName)
+		return exec.handleModuleFunctionCall(receiverVarName, methodName, args, stack, pc)
 	}
 
 	// Try to determine the type name of the receiver
@@ -704,6 +698,13 @@ func (exec *Executor) isModuleName(name string) bool {
 
 // callModuleFunction calls a function in a module
 func (exec *Executor) callModuleFunction(moduleName, functionName string, args ...interface{}) (interface{}, error) {
+	// First, check if the module is registered in the VM
+	if module, exists := exec.vm.GetModule(moduleName); exists {
+		// Call the module executor directly
+		return module(functionName, args...)
+	}
+
+	// If not found in VM modules, fall back to builtin modules
 	// Use the builtin module system instead of hardcoding functions
 	// Get the module functions from the builtin package
 	moduleFuncs, exists := builtin.GetModuleFunctions(moduleName)

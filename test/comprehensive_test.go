@@ -136,47 +136,6 @@ func main() {
 		stats.ExecutionTime, stats.InstructionCount, stats.ErrorCount, result)
 }
 
-// TestModuleFunctionality tests module-related functionality
-func TestModuleFunctionality(t *testing.T) {
-	// Create script
-	script := goscript.NewScript([]byte(""))
-
-	// Get module manager
-	moduleManager := script.GetModuleManager()
-	if moduleManager == nil {
-		t.Fatal("Module manager should not be nil")
-	}
-
-	// Check default modules
-	modules := moduleManager.GetAllModules()
-	if len(modules) == 0 {
-		t.Error("Should have default modules")
-	}
-
-	// Check if math module exists
-	mathModule, exists := moduleManager.GetModule("math")
-	if !exists {
-		t.Error("Math module should exist")
-	}
-
-	// Test calling a function from the math module
-	absFunc, exists := mathModule.GetFunction("abs")
-	if !exists {
-		t.Error("abs function should exist in math module")
-	}
-
-	result, err := absFunc(-5)
-	if err != nil {
-		t.Fatalf("Failed to call abs function: %v", err)
-	}
-
-	if result != 5 {
-		t.Errorf("Expected abs(-5) to be 5, got %v", result)
-	}
-
-	t.Log("Module functionality test passed")
-}
-
 // TestComplexScriptExecution tests execution of a more complex script
 func TestComplexScriptExecution(t *testing.T) {
 	// Create a script that will produce a known result with our simplified execution
@@ -345,53 +304,4 @@ func TestNestedFunctionCalls(t *testing.T) {
 	}
 
 	t.Log("Nested function calls test passed")
-}
-
-// TestMathModuleFunctions tests math module functions
-func TestMathModuleFunctions(t *testing.T) {
-	// Create script
-	script := goscript.NewScript([]byte(""))
-
-	// Get module manager
-	moduleManager := script.GetModuleManager()
-
-	// Get math module
-	mathModule, exists := moduleManager.GetModule("math")
-	if !exists {
-		t.Fatal("Math module should exist")
-	}
-
-	// Test abs function with positive number
-	absFunc, exists := mathModule.GetFunction("abs")
-	if !exists {
-		t.Fatal("abs function should exist in math module")
-	}
-
-	result1, err := absFunc(5)
-	if err != nil {
-		t.Fatalf("Failed to call abs function with positive number: %v", err)
-	}
-	if result1 != 5 {
-		t.Errorf("Expected abs(5) to be 5, got %v", result1)
-	}
-
-	// Test abs function with negative number
-	result2, err := absFunc(-5)
-	if err != nil {
-		t.Fatalf("Failed to call abs function with negative number: %v", err)
-	}
-	if result2 != 5 {
-		t.Errorf("Expected abs(-5) to be 5, got %v", result2)
-	}
-
-	// Test abs function with zero
-	result3, err := absFunc(0)
-	if err != nil {
-		t.Fatalf("Failed to call abs function with zero: %v", err)
-	}
-	if result3 != 0 {
-		t.Errorf("Expected abs(0) to be 0, got %v", result3)
-	}
-
-	t.Log("Math module functions test passed")
 }

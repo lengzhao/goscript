@@ -3,10 +3,12 @@ package vm
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/instruction"
+	"github.com/lengzhao/goscript/types"
 )
 
 // VM represents the GoScript virtual machine
@@ -28,6 +30,9 @@ type VM struct {
 
 	// Script function information for parameter names
 	scriptFunctionInfos map[string]*ScriptFunctionInfo
+
+	// Registered modules with simplified interface
+	modules map[string]types.ModuleExecutor
 
 	// Mutex for thread safety
 	mu sync.RWMutex
@@ -59,55 +64,57 @@ func NewVM() *VM {
 		InstructionSets:     make(map[string][]*instruction.Instruction),
 		functions:           make(map[string]ScriptFunction),
 		scriptFunctionInfos: make(map[string]*ScriptFunctionInfo),
+		modules:             make(map[string]types.ModuleExecutor),
 		instructions:        make([]*instruction.Instruction, 0),
 		GlobalCtx:           context.NewContext("global", nil), // Global context with no parent
-		maxInstructions:     10000,                             // Default limit of 10,000 instructions
+		maxInstructions:     1000,                              // Default limit of 10,000 instructions
 	}
 	return vm
 }
 
-// SetMaxInstructions sets the maximum number of instructions allowed
-func (vm *VM) SetMaxInstructions(max int64) {
-	vm.maxInstructions = max
-}
-
-// GetInstructionCount returns the current instruction count
-func (vm *VM) GetInstructionCount() int64 {
-	return vm.instructionCount
-}
-
-// ResetInstructionCount resets the instruction counter
-func (vm *VM) ResetInstructionCount() {
-	vm.instructionCount = 0
-}
-
-// AddInstructionSet adds a set of instructions with a specific key
-func (vm *VM) AddInstructionSet(key string, instructions []*instruction.Instruction) {
+// RegisterModule registers a module with a simplified interface
+func (vm *VM) RegisterModule(name string, executor types.ModuleExecutor) {
 	vm.mu.Lock()
 	defer vm.mu.Unlock()
-	vm.InstructionSets[key] = instructions
+	vm.modules[name] = executor
 }
 
-// GetInstructionSet retrieves instructions by key
-func (vm *VM) GetInstructionSet(key string) ([]*instruction.Instruction, bool) {
+// GetModule retrieves a registered module by name
+func (vm *VM) GetModule(name string) (types.ModuleExecutor, bool) {
 	vm.mu.RLock()
 	defer vm.mu.RUnlock()
-	instructions, exists := vm.InstructionSets[key]
-	return instructions, exists
+	module, exists := vm.modules[name]
+	return module, exists
 }
 
-// GetInstructionSets returns all instruction sets
-func (vm *VM) GetInstructionSets() map[string][]*instruction.Instruction {
+// GetFunction retrieves a registered function by name
+// This can be a standalone function or a module function (module.function)
+func (vm *VM) GetFunction(name string) (ScriptFunction, bool) {
 	vm.mu.RLock()
 	defer vm.mu.RUnlock()
 
-	// Create a copy of the map to avoid race conditions
-	result := make(map[string][]*instruction.Instruction)
-	for key, instructions := range vm.InstructionSets {
-		result[key] = instructions
+	// First check if it's a standalone function
+	fn, exists := vm.functions[name]
+	if exists {
+		return fn, true
 	}
 
-	return result
+	// Check if it's a module function (format: "module.function")
+	if idx := strings.Index(name, "."); idx != -1 {
+		moduleName := name[:idx]
+		entrypoint := name[idx+1:]
+
+		// Check if the module exists
+		if module, moduleExists := vm.modules[moduleName]; moduleExists {
+			// Create a wrapper function that calls the module executor
+			wrapper := func(args ...interface{}) (interface{}, error) {
+				return module(entrypoint, args...)
+			}
+			return wrapper, true
+		}
+	}
+
+	return nil, false
 }
 
 // RegisterFunction registers a function that can be called from scripts
@@ -187,14 +194,6 @@ func (vm *VM) RegisterScriptFunction(name string, info *ScriptFunctionInfo) {
 	}
 }
 
-// GetFunction retrieves a registered function by name
-func (vm *VM) GetFunction(name string) (ScriptFunction, bool) {
-	vm.mu.RLock()
-	defer vm.mu.RUnlock()
-	fn, exists := vm.functions[name]
-	return fn, exists
-}
-
 // GetAllScriptFunctions returns all registered script function information
 func (vm *VM) GetAllScriptFunctions() map[string]*ScriptFunctionInfo {
 	vm.mu.RLock()
@@ -237,9 +236,53 @@ func (vm *VM) AddInstruction(instr *instruction.Instruction) {
 	vm.instructions = append(vm.instructions, instr)
 }
 
+// SetMaxInstructions sets the maximum number of instructions allowed
+func (vm *VM) SetMaxInstructions(max int64) {
+	vm.maxInstructions = max
+}
+
+// GetInstructionCount returns the current instruction count
+func (vm *VM) GetInstructionCount() int64 {
+	return vm.instructionCount
+}
+
+// ResetInstructionCount resets the instruction counter
+func (vm *VM) ResetInstructionCount() {
+	vm.instructionCount = 0
+}
+
+// AddInstructionSet adds a set of instructions with a specific key
+func (vm *VM) AddInstructionSet(key string, instructions []*instruction.Instruction) {
+	vm.mu.Lock()
+	defer vm.mu.Unlock()
+	vm.InstructionSets[key] = instructions
+}
+
+// GetInstructionSet retrieves instructions by key
+func (vm *VM) GetInstructionSet(key string) ([]*instruction.Instruction, bool) {
+	vm.mu.RLock()
+	defer vm.mu.RUnlock()
+	instructions, exists := vm.InstructionSets[key]
+	return instructions, exists
+}
+
+// GetInstructionSets returns all instruction sets
+func (vm *VM) GetInstructionSets() map[string][]*instruction.Instruction {
+	vm.mu.RLock()
+	defer vm.mu.RUnlock()
+
+	// Create a copy of the map to avoid race conditions
+	result := make(map[string][]*instruction.Instruction)
+	for key, instructions := range vm.InstructionSets {
+		result[key] = instructions
+	}
+
+	return result
+}
+
 // Execute runs the virtual machine with the given entry point
 // If entryPoint is empty, it defaults to "main.main" or tries to find another main function
-func (vm *VM) Execute(entryPoint string) (interface{}, error) {
+func (vm *VM) Execute(entryPoint string, args ...interface{}) (interface{}, error) {
 	// Reset instruction count before execution
 	vm.ResetInstructionCount()
 
@@ -293,12 +336,43 @@ func (vm *VM) Execute(entryPoint string) (interface{}, error) {
 	functionCtx := context.NewContext(entryPoint, packageCtx)
 	vm.currentCtx = functionCtx
 
+	// Set function arguments as local variables
+	// Check if this is a script function with known parameter names
+	paramNames := vm.getScriptFunctionParamNames(entryPoint, len(args))
+
+	// Set arguments as local variables with appropriate names
+	for i, arg := range args {
+		paramName := paramNames[i]
+		functionCtx.CreateVariableWithType(paramName, arg, "unknown")
+	}
+
 	// Execute the function using the executor
 	executor := NewExecutor(vm)
 	result, err := executor.executeInstructions(instructions)
 
 	// Return result and error
 	return result, err
+}
+
+// getScriptFunctionParamNames gets the parameter names for a script function
+// If the function is not a registered script function, it falls back to generic names
+func (vm *VM) getScriptFunctionParamNames(functionKey string, argCount int) []string {
+	vm.mu.RLock()
+	defer vm.mu.RUnlock()
+
+	// Look for the function in script function infos
+	for _, info := range vm.scriptFunctionInfos {
+		if info.Key == functionKey && len(info.ParamNames) >= argCount {
+			return info.ParamNames[:argCount]
+		}
+	}
+
+	// Fall back to generic parameter names
+	paramNames := make([]string, argCount)
+	for i := 0; i < argCount; i++ {
+		paramNames[i] = fmt.Sprintf("arg%d", i)
+	}
+	return paramNames
 }
 
 // SetDebug enables or disables debug mode

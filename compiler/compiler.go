@@ -202,11 +202,23 @@ func (c *Compiler) compileFunction(fn *ast.FuncDecl) error {
 	// Compile function parameters as local variables
 	if fn.Type.Params != nil {
 		for _, param := range fn.Type.Params.List {
-			for _, name := range param.Names {
-				c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, name.Name, nil))
-				// Note: We don't load parameter values here because they will be set by VM when calling the function
-				// The VM will map the actual arguments to these parameter names
-				paramNames = append(paramNames, name.Name)
+			// Handle parameters with explicit names
+			if len(param.Names) > 0 {
+				for _, name := range param.Names {
+					c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, name.Name, nil))
+					// Note: We don't load parameter values here because they will be set by VM when calling the function
+					// The VM will map the actual arguments to these parameter names
+					paramNames = append(paramNames, name.Name)
+				}
+			} else {
+				// Handle parameters without explicit names (e.g., in simplified syntax where name is in the type field)
+				// In GoScript's simplified syntax, the parameter name might be stored in the type field
+				if ident, ok := param.Type.(*ast.Ident); ok {
+					// The parameter name is stored in the type field
+					paramName := ident.Name
+					c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, paramName, nil))
+					paramNames = append(paramNames, paramName)
+				}
 			}
 		}
 	}
@@ -757,12 +769,11 @@ func (c *Compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
 		return fmt.Errorf("unsupported increment/decrement target: %T", x)
 	}
 
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, 1, nil))
 	// Emit the appropriate instruction
 	if stmt.Tok == token.INC {
-		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, 1, nil))
 		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpAdd, nil))
 	} else if stmt.Tok == token.DEC {
-		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, 1, nil))
 		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpSub, nil))
 	}
 

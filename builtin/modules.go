@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/lengzhao/goscript/types"
 )
 
 // Strings module functions
-var StringsModule = map[string]Function{
+var StringsModule = map[string]types.Function{
 	"Contains": func(args ...interface{}) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("contains function requires 2 arguments")
@@ -124,7 +126,7 @@ var StringsModule = map[string]Function{
 }
 
 // Fmt module functions
-var FmtModule = map[string]Function{
+var FmtModule = map[string]types.Function{
 	"Printf": func(args ...interface{}) (interface{}, error) {
 		if len(args) < 1 {
 			return nil, fmt.Errorf("printf function requires at least 1 argument")
@@ -165,7 +167,7 @@ var FmtModule = map[string]Function{
 }
 
 // Math module functions
-var MathModule = map[string]Function{
+var MathModule = map[string]types.Function{
 	"Abs": func(args ...interface{}) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("abs function requires 1 argument")
@@ -232,7 +234,7 @@ var MathModule = map[string]Function{
 }
 
 // JSON module functions
-var JSONModule = map[string]Function{
+var JSONModule = map[string]types.Function{
 	"Marshal": func(args ...interface{}) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("marshal function requires 1 argument")
@@ -263,7 +265,7 @@ var JSONModule = map[string]Function{
 }
 
 // GetModuleFunctions returns the functions for a given module
-func GetModuleFunctions(moduleName string) (map[string]Function, bool) {
+func GetModuleFunctions(moduleName string) (map[string]types.Function, bool) {
 	switch moduleName {
 	case "strings":
 		return StringsModule, true
@@ -276,6 +278,27 @@ func GetModuleFunctions(moduleName string) (map[string]Function, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// GetModuleExecutor returns a ModuleExecutor for a given module
+func GetModuleExecutor(moduleName string) (types.ModuleExecutor, bool) {
+	// Get the module functions
+	moduleFuncs, exists := GetModuleFunctions(moduleName)
+	if !exists {
+		return nil, false
+	}
+
+	// Create a ModuleExecutor that delegates to the module functions
+	moduleExecutor := func(entrypoint string, args ...interface{}) (interface{}, error) {
+		// Look up the function in the module
+		if fn, exists := moduleFuncs[entrypoint]; exists {
+			// Call the function with the provided arguments
+			return fn(args...)
+		}
+		return nil, fmt.Errorf("function %s not found in module %s", entrypoint, moduleName)
+	}
+
+	return moduleExecutor, true
 }
 
 func ListAllModules() []string {
