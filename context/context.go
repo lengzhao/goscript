@@ -88,6 +88,7 @@ func (ctx *Context) SetVariable(name string, value interface{}) error {
 // CreateVariableWithType sets a variable with its type in the current context
 func (ctx *Context) CreateVariableWithType(name string, value interface{}, varType string) error {
 	if _, exists := ctx.variables[name]; exists {
+		// panic(fmt.Sprintf("variable %s already exists", name))
 		return fmt.Errorf("variable %s already exists", name)
 	}
 	ctx.variables[name] = value

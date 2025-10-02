@@ -140,15 +140,7 @@ func (vm *VM) RegisterScriptFunction(name string, info *ScriptFunctionInfo) {
 			return nil, fmt.Errorf("script function %s not found", info.Key)
 		}
 
-		// For script-defined functions, we need to execute them in the proper context
-		// If we already have a current context, use it as parent
-		// Otherwise create new context with no parent (standalone execution)
-		var functionCtx *context.Context
-		if vm.currentCtx != nil {
-			functionCtx = context.NewContext(info.Key, vm.currentCtx)
-		} else {
-			functionCtx = context.NewContext(info.Key, nil)
-		}
+		functionCtx := context.NewContext(info.Key, vm.currentCtx)
 
 		// Set function arguments as local variables using the actual parameter names
 		paramNames := make([]string, len(args))
@@ -216,9 +208,11 @@ func (vm *VM) GetInstructions() []*instruction.Instruction {
 	// Collect all instructions from all instruction sets
 	var allInstructions []*instruction.Instruction
 	for key, instructions := range vm.InstructionSets {
-		fmt.Printf("Instructions for key %s:\n", key)
-		for i, instr := range instructions {
-			fmt.Printf("  %d: %s\n", i, instr.String())
+		if vm.debug {
+			fmt.Printf("Instructions for key %s:\n", key)
+			for i, instr := range instructions {
+				fmt.Printf("  %d: %s\n", i, instr.String())
+			}
 		}
 		allInstructions = append(allInstructions, instructions...)
 	}
@@ -266,8 +260,8 @@ func (vm *VM) GetInstructionSet(key string) ([]*instruction.Instruction, bool) {
 	return instructions, exists
 }
 
-// GetInstructionSets returns all instruction sets
-func (vm *VM) GetInstructionSets() map[string][]*instruction.Instruction {
+// GetAllInstructionSets returns all instruction sets
+func (vm *VM) GetAllInstructionSets() map[string][]*instruction.Instruction {
 	vm.mu.RLock()
 	defer vm.mu.RUnlock()
 
@@ -316,8 +310,16 @@ func (vm *VM) Execute(entryPoint string, args ...interface{}) (interface{}, erro
 	// The package context's parent is the global context
 	packageCtx := context.NewContext(packageName, globalCtx)
 
-	// First, execute package-level code (init, global variable creation, etc.)
-	// This would typically be in "packageName.init" or similar
+	// First, execute package-level code (imports, global variable creation, etc.)
+	// This would typically be in the package name itself
+	if packageInstructions, exists := vm.GetInstructionSet(packageName); exists {
+		vm.currentCtx = packageCtx
+		executor := NewExecutor(vm)
+		if _, err := executor.executeInstructions(packageInstructions); err != nil {
+			return nil, fmt.Errorf("error executing package-level code: %w", err)
+		}
+	}
+
 	if initInstructions, exists := vm.GetInstructionSet(packageName + ".init"); exists {
 		vm.currentCtx = packageCtx
 		executor := NewExecutor(vm)
@@ -348,6 +350,7 @@ func (vm *VM) Execute(entryPoint string, args ...interface{}) (interface{}, erro
 
 	// Execute the function using the executor
 	executor := NewExecutor(vm)
+
 	result, err := executor.executeInstructions(instructions)
 
 	// Return result and error

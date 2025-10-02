@@ -33,6 +33,9 @@ type Compiler struct {
 
 	// Instructions for the current scope
 	currentInstructions []*instruction.Instruction
+
+	// Imported modules map (package name -> import path)
+	importedModules map[string]string
 }
 
 // NewCompiler creates a new compiler with key-based instruction management
@@ -46,6 +49,7 @@ func NewCompiler(vmInstance *vm.VM) *Compiler {
 		packageName:         "main",
 		keyCounter:          0,
 		currentInstructions: make([]*instruction.Instruction, 0),
+		importedModules:     make(map[string]string),
 	}
 }
 
@@ -124,8 +128,15 @@ func (c *Compiler) compileImportDecl(decl *ast.GenDecl) error {
 				pkgName = parts[len(parts)-1]
 			}
 
+			// Store the imported module
+			c.importedModules[pkgName] = path
+
 			// Emit the import instruction
 			c.emitInstruction(instruction.NewInstruction(instruction.OpImport, path, pkgName))
+
+			// Also create a variable for the module with "module" type
+			// This will allow us to handle module calls uniformly with method calls
+			c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, pkgName, "module"))
 		}
 	}
 	return nil
@@ -871,8 +882,13 @@ func (c *Compiler) compileCompositeLit(lit *ast.CompositeLit) error {
 		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, tempVarName, nil))
 	} else {
 		// Handle struct literals like Person{name: "Alice"}
-		// Create a new struct
-		c.emitInstruction(instruction.NewInstruction(instruction.OpNewStruct, nil, nil))
+		// Create a new struct with type information if available
+		var structType string
+		if lit.Type != nil {
+			// Try to extract type name from the composite literal type
+			structType = c.getTypeName(lit.Type)
+		}
+		c.emitInstruction(instruction.NewInstruction(instruction.OpNewStruct, structType, nil))
 
 		// Store the struct in a temporary variable so we can reference it multiple times
 		tempVarName := c.generateKey("composite_lit")
@@ -1026,9 +1042,9 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 		// Emit the function call instruction with key-based calling
 		c.emitInstruction(instruction.NewInstruction(instruction.OpCall, fun.Name, argCount))
 	case *ast.SelectorExpr:
-		// Method calls (e.g., p.SetWidth(20))
-		// For the new approach, we'll generate a qualified method name and use OpCall
-		// First, compile the receiver (e.g., p)
+		// Method calls (e.g., p.SetWidth(20)) or module calls (e.g., math.Max(1, 2))
+		// For unified handling, we'll compile the receiver and then use OpCall
+		// First, compile the receiver (e.g., p or math)
 		if err := c.compileExpr(fun.X); err != nil {
 			return err
 		}
@@ -1041,29 +1057,24 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 			}
 		}
 
-		// Try to determine the type name of the receiver
-		typeName := ""
-		if ident, ok := fun.X.(*ast.Ident); ok {
-			// We need to get the type of the variable from the context
-			// For now, we'll use a heuristic approach
-			typeName = ident.Name // This is a simplification, we should get the actual type
-		}
-
-		// If we couldn't determine the type name, we'll use a generic approach
-		methodName := fun.Sel.Name
-		qualifiedMethodName := methodName
-		if typeName != "" {
-			qualifiedMethodName = fmt.Sprintf("%s.%s", typeName, methodName)
-		}
-
-		// Emit the function call instruction with the qualified method name
-		// The total argument count includes the receiver as the first argument
-		c.emitInstruction(instruction.NewInstruction(instruction.OpCall, qualifiedMethodName, argCount+1))
+		// For unified handling, we use the format "receiver.functionName"
+		// The receiver will be on the stack as the first argument
+		functionName := fun.Sel.Name
+		// Emit the function call instruction with the function name only
+		// The receiver is already on the stack as the first argument
+		c.emitInstruction(instruction.NewInstruction(instruction.OpCall, functionName, argCount+1))
 	default:
 		return fmt.Errorf("unsupported function call type: %T", expr.Fun)
 	}
 
 	return nil
+}
+
+// isModuleName checks if a name is a registered module name
+func (c *Compiler) isModuleName(name string) bool {
+	// Check against imported modules
+	_, exists := c.importedModules[name]
+	return exists
 }
 
 // compileIdent compiles an identifier

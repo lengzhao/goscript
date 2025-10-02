@@ -23,7 +23,7 @@ func TestScriptsInDataFolder(t *testing.T) {
 
 	// if false {
 	if false {
-		runCase = "add.gs"
+		runCase = "struct.gs"
 	}
 
 	// Test each .gs file

@@ -18,6 +18,8 @@ GoScript是一个兼容Go标准语法的脚本引擎，它允许你在Go应用�
 - **可扩展性**：支持自定义函数和模块
 - **安全性**：提供执行时间和内存使用限制
 - **复用Go原生模块**：词法分析、语法分析等直接复用Go标准库
+- **基于Key的上下文管理**：通过唯一标识符管理作用域和变量
+- **完整的Go语法支持**：支持结构体、方法、range语句、复合字面量等
 
 ## 2. 架构设计
 
@@ -153,10 +155,15 @@ type ExecutionContext struct {
    - 普通函数：`main.FunctionName`
    - 结构体方法：`main.StructName.MethodName`
    - 其他模块：`moduleName.FunctionName`
+   - 代码块：`main.main.block_1`
 
 2. **编译时跟踪**：编译器在编译BlockStmt时分析当前上下文的key，并生成相应的作用域管理指令
 
-3. **运行时管理**：运行时创建runCtx对象来管理变量和引用关系，每个runCtx引用其父级上下文
+3. **运行时管理**：运行时创建Context对象来管理变量和引用关系，每个Context引用其父级上下文
+
+4. **变量查找**：变量查找遵循作用域链，从当前上下文向上查找直到全局上下文
+
+5. **作用域隔离**：不同作用域之间的变量自然隔离，防止变量污染
 
 ## 5. 虚拟机与操作码
 
@@ -178,6 +185,15 @@ const (
     OpExitScope               // 退出作用域
     OpEnterScopeWithKey       // 进入指定key的作用域
     OpExitScopeWithKey        // 退出指定key的作用域
+    OpCreateVar               // 创建变量
+    OpNewSlice                // 创建切片
+    OpNewStruct               // 创建结构体
+    OpGetField                // 获取结构体字段
+    OpSetField                // 设置结构体字段
+    OpGetIndex                // 获取索引元素
+    OpSetIndex                // 设置索引元素
+    OpLen                     // 获取长度
+    OpImport                  // 导入模块
 )
 ```
 
@@ -245,12 +261,14 @@ type Module struct {
 3. **控制结构**：
    - 条件语句 (if/else)
    - 循环语句 (for)
+   - range语句 (for range)
    - switch语句
    - goto语句
 
 4. **函数**：
    - 函数声明
    - 函数调用
+   - 方法声明和调用
    - 多返回值
    - 可变参数
    - 匿名函数
@@ -261,8 +279,16 @@ type Module struct {
    - 映射
    - 结构体
    - 指针
+   - 复合字面量 ([]int{1, 2, 3} 或 Person{name: "Alice"})
 
-6. **错误处理**：
+6. **操作符**：
+   - 算术操作符 (+, -, *, /, %)
+   - 比较操作符 (==, !=, <, <=, >, >=)
+   - 逻辑操作符 (&&, ||, !)
+   - 赋值操作符 (=, +=, -=, *=, /=, %=)
+   - 自增自减操作符 (++, --)
+
+7. **错误处理**：
    - error类型
    - panic/recover机制
 

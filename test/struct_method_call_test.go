@@ -82,7 +82,7 @@ func main() {
 		t.Fatalf("Failed to execute script: %v", err)
 	}
 
-	// With pointer receiver modifying height to 20 and width unchanged at 10,
+	// With pointer receiver modifying height to 20 and value receiver not modifying width,
 	// area should be 10 * 20 = 200
 	expected := 200
 	if result != expected {

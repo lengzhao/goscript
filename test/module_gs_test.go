@@ -20,10 +20,12 @@ func TestModuleGSFileCompilation(t *testing.T) {
 	moduleVM := goscript.NewScript([]byte(mathCode))
 
 	moduleVM.Build()
+	moduleVM.SetDebug(true)
 
 	// Create a script with the main code
 	script := goscript.NewScript([]byte(mainCode))
 	script.RegisterModule("math", moduleVM.CallFunction)
+	script.SetDebug(true)
 
 	// Run the script
 	result, err := script.Run()

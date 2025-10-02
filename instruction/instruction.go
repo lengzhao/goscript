@@ -96,6 +96,8 @@ const (
 
 	// Break from loop
 	OpBreak
+
+	OpCodeLast
 )
 
 // String returns the string representation of an OpCode

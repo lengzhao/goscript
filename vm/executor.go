@@ -24,15 +24,15 @@ type OpHandler func(stack *Stack, instr *instruction.Instruction, pc int) (int, 
 // Executor handles the execution of instructions
 type Executor struct {
 	vm *VM
-	// Opcode handler map for table-driven execution
-	opcodeHandlers map[instruction.OpCode]OpHandler
+	// Opcode handler array for table-driven execution
+	// Using array instead of map for better performance
+	opcodeHandlers [instruction.OpCodeLast + 1]OpHandler
 }
 
 // NewExecutor creates a new executor
 func NewExecutor(vm *VM) *Executor {
 	exec := &Executor{
-		vm:             vm,
-		opcodeHandlers: make(map[instruction.OpCode]OpHandler),
+		vm: vm,
 	}
 
 	// Initialize opcode handlers
@@ -41,7 +41,7 @@ func NewExecutor(vm *VM) *Executor {
 	return exec
 }
 
-// initOpcodeHandlers initializes the opcode handler map
+// initOpcodeHandlers initializes the opcode handler array
 func (exec *Executor) initOpcodeHandlers() {
 	exec.opcodeHandlers[instruction.OpNop] = exec.handleNop
 	exec.opcodeHandlers[instruction.OpLoadConst] = exec.handleLoadConst
@@ -100,9 +100,9 @@ func (exec *Executor) executeInstructions(instructions []*instruction.Instructio
 			fmt.Printf("Executing instruction %d: %s, stack size: %d, stack: %v\n", pc, instr.String(), stack.Len(), stack.Items())
 		}
 
-		// Look up the handler for this opcode
-		handler, exists := exec.opcodeHandlers[instr.Op]
-		if !exists {
+		// Look up the handler for this opcode using array for better performance
+		handler := exec.opcodeHandlers[instr.Op]
+		if handler == nil {
 			return nil, fmt.Errorf("unsupported operation: %s", instr.Op.String())
 		}
 
@@ -144,34 +144,34 @@ func (exec *Executor) handleLoadName(stack *Stack, instr *instruction.Instructio
 	}
 
 	// Check if this is a field access (e.g., "p.age")
-	if strings.Contains(name, ".") {
-		// Split the name into variable and field parts
-		parts := strings.Split(name, ".")
-		if len(parts) == 2 {
-			varName := parts[0]
-			fieldName := parts[1]
+	// if strings.Contains(name, ".") {
+	// Split the name into variable and field parts
+	parts := strings.Split(name, ".")
+	if len(parts) == 2 {
+		varName := parts[0]
+		fieldName := parts[1]
 
-			// Look up the variable (struct) in the context hierarchy
-			structValue, exists := exec.vm.currentCtx.GetVariable(varName)
-			if !exists {
-				return 0, fmt.Errorf("undefined variable: %s", varName)
-			}
+		// Look up the variable (struct) in the context hierarchy
+		structValue, exists := exec.vm.currentCtx.GetVariable(varName)
+		if !exists {
+			return 0, fmt.Errorf("undefined variable: %s", varName)
+		}
 
-			// Check if it's a struct (map)
-			if structMap, ok := structValue.(map[string]interface{}); ok {
-				// Get the field value
-				fieldValue, fieldExists := structMap[fieldName]
-				if !fieldExists {
-					// Field doesn't exist, push nil
-					stack.Push(nil)
-				} else {
-					// Push the field value
-					stack.Push(fieldValue)
-				}
-				return pc + 1, nil
+		// Check if it's a struct (map)
+		if structMap, ok := structValue.(map[string]interface{}); ok {
+			// Get the field value
+			fieldValue, fieldExists := structMap[fieldName]
+			if !fieldExists {
+				// Field doesn't exist, push nil
+				stack.Push(nil)
+			} else {
+				// Push the field value
+				stack.Push(fieldValue)
 			}
+			return pc + 1, nil
 		}
 	}
+	// }
 
 	// Look up the variable in the context hierarchy
 	value, exists := exec.vm.currentCtx.GetVariable(name)
@@ -226,24 +226,150 @@ func (exec *Executor) handlePop(stack *Stack, instr *instruction.Instruction, pc
 
 // handleCall handles the CALL opcode
 func (exec *Executor) handleCall(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
-	vm := exec.vm
-	funcName, ok := instr.Arg.(string)
+	// Get the function name and argument count
+	functionName, ok := instr.Arg.(string)
 	if !ok {
-		return 0, fmt.Errorf("invalid function name")
+		return 0, fmt.Errorf("invalid function name for CALL")
 	}
 
 	argCount, ok := instr.Arg2.(int)
 	if !ok {
-		return 0, fmt.Errorf("invalid argument count")
+		return 0, fmt.Errorf("invalid argument count for CALL")
 	}
 
-	// Check if this is a method call (contains a dot)
-	if strings.Contains(funcName, ".") {
-		return exec.handleMethodCall(stack, vm, funcName, argCount, pc)
+	// Debug information - print stack before processing
+	if exec.vm.debug {
+		fmt.Printf("CALL %s with %d arguments, stack: %v\n", functionName, argCount, stack.Items())
 	}
 
-	// Handle regular function calls
-	return exec.handleFunctionCall(stack, vm, funcName, argCount, pc)
+	// Prepare arguments using the unified function
+	args, err := exec.prepareArguments(stack, argCount)
+	if err != nil {
+		return 0, fmt.Errorf("error preparing arguments for CALL %s: %w", functionName, err)
+	}
+
+	// Unified call handling
+	callType := exec.determineCallType(args, functionName)
+
+	switch callType {
+	case callTypeModule:
+		return exec.handleModuleCall(stack, functionName, args, pc)
+	case callTypeMethod:
+		return exec.handleMethodCallUnified(stack, functionName, args, pc)
+	default:
+		// Regular function call
+		// Push the arguments back to the stack for handleFunctionCall
+		exec.pushArgumentsBack(stack, args)
+		return exec.handleFunctionCall(stack, exec.vm, functionName, argCount, pc)
+	}
+}
+
+// CallType represents the type of function call
+type CallType int
+
+const (
+	callTypeRegular CallType = iota
+	callTypeModule
+	callTypeMethod
+)
+
+// determineCallType determines the type of call based on arguments and function name
+func (exec *Executor) determineCallType(args []interface{}, functionName string) CallType {
+	if len(args) > 0 {
+		// Check if the first argument is a module
+		if _, isModule := exec.isModuleVariable(args[0]); isModule {
+			return callTypeModule
+		}
+
+		// Check if this is a method call with a struct receiver
+		if exec.isStructReceiver(args[0]) {
+			return callTypeMethod
+		}
+	}
+
+	return callTypeRegular
+}
+
+// handleModuleCall handles module function calls
+func (exec *Executor) handleModuleCall(stack *Stack, functionName string, args []interface{}, pc int) (int, error) {
+	// This is a module call (e.g., math.Max)
+	moduleName, _ := exec.isModuleVariable(args[0])
+	qualifiedName := fmt.Sprintf("%s.%s", moduleName, functionName)
+	// For module calls, we don't include the module name in the arguments
+	moduleArgs := args[1:] // Remove the module name from arguments
+
+	// Push the arguments back to the stack for handleFunctionCall
+	for _, arg := range moduleArgs {
+		stack.Push(arg)
+	}
+
+	return exec.handleFunctionCall(stack, exec.vm, qualifiedName, len(moduleArgs), pc)
+}
+
+// handleMethodCallUnified handles method calls with unified approach
+func (exec *Executor) handleMethodCallUnified(stack *Stack, functionName string, args []interface{}, pc int) (int, error) {
+	// This is a method call (e.g., rect.Area)
+	// The receiver is already included in args[0]
+	// For method calls, we use the specialized handleCallMethod function
+	// Push the arguments back to the stack
+	for _, arg := range args {
+		stack.Push(arg)
+	}
+
+	// Create a CALL_METHOD instruction and delegate to handleCallMethod
+	// For CALL_METHOD, argCount should not include the receiver
+	callMethodInstr := instruction.NewInstruction(instruction.OpCallMethod, functionName, len(args)-1)
+	return exec.handleCallMethod(stack, callMethodInstr, pc)
+}
+
+// isModuleVariable checks if a variable is a module
+func (exec *Executor) isModuleVariable(variable interface{}) (string, bool) {
+	// In our implementation, modules are stored as variables
+	// We need to check if this variable corresponds to a registered module
+	if varName, ok := variable.(string); ok {
+		// Check if this variable is registered as a module in the VM
+		if _, moduleExists := exec.vm.GetModule(varName); moduleExists {
+			return varName, true
+		}
+	}
+	return "", false
+}
+
+// isStructReceiver checks if the variable is a struct receiver
+func (exec *Executor) isStructReceiver(variable interface{}) bool {
+	// Check if the variable is a struct (map)
+	_, ok := variable.(map[string]interface{})
+	return ok
+}
+
+// getQualifiedMethodName gets the qualified method name for a struct receiver
+func (exec *Executor) getQualifiedMethodName(receiver interface{}, methodName string) string {
+	// Try to get the type name from the struct
+	typeName := exec.getTypeNameFromStruct(receiver)
+	if typeName != "" {
+		return fmt.Sprintf("%s.%s", typeName, methodName)
+	}
+	// Fallback to just the method name
+	return methodName
+}
+
+// getTypeNameFromStruct extracts the type name from a struct receiver
+func (exec *Executor) getTypeNameFromStruct(receiver interface{}) string {
+	if structMap, ok := receiver.(map[string]interface{}); ok {
+		// First check for explicit type field
+		if typeName, exists := structMap["_type"]; exists {
+			if name, ok := typeName.(string); ok {
+				return name
+			}
+		}
+		// Fallback: try to infer from keys
+		for key := range structMap {
+			if key != "width" && key != "height" && key != "radius" && key != "_type" && key != "name" && key != "age" {
+				return key
+			}
+		}
+	}
+	return ""
 }
 
 // handleMethodCall handles method calls with format "receiver.method" or "*type.method"
@@ -565,14 +691,10 @@ func (exec *Executor) callScriptDefinedMethod(stack *Stack, vm *VM, qualifiedMet
 func (exec *Executor) handleFunctionCall(stack *Stack, vm *VM, funcName string, argCount int, pc int) (int, error) {
 	// Check if it's a registered script function
 	if fn, exists := vm.GetFunction(funcName); exists {
-		// Prepare arguments
-		if stack.Len() < argCount {
-			return 0, fmt.Errorf("stack underflow when calling function %s", funcName)
-		}
-
-		args := make([]interface{}, argCount)
-		for i := argCount - 1; i >= 0; i-- {
-			args[i] = stack.Pop()
+		// Prepare arguments using the unified function
+		args, err := exec.prepareArguments(stack, argCount)
+		if err != nil {
+			return 0, fmt.Errorf("error preparing arguments for function %s: %w", funcName, err)
 		}
 
 		// Call the function
@@ -598,21 +720,15 @@ func (exec *Executor) handleFunctionCall(stack *Stack, vm *VM, funcName string, 
 
 // callScriptDefinedFunction calls a script-defined function
 func (exec *Executor) callScriptDefinedFunction(stack *Stack, vm *VM, funcName string, argCount int, pc int) (int, error) {
-	// Prepare arguments
-	if stack.Len() < argCount {
-		return 0, fmt.Errorf("stack underflow when calling function %s", funcName)
+	// Prepare arguments using the unified function
+	args, err := exec.prepareArguments(stack, argCount)
+	if err != nil {
+		return 0, fmt.Errorf("error preparing arguments for script function %s: %w", funcName, err)
 	}
 
 	// Create new context for the function call
 	// The function context's parent is the current context
 	functionCtx := execContext.NewContext(funcName, exec.vm.currentCtx)
-
-	// Set function arguments as local variables
-	args := make([]interface{}, argCount)
-	// Pop arguments in reverse order (last argument first)
-	for i := argCount - 1; i >= 0; i-- {
-		args[i] = stack.Pop()
-	}
 
 	// Try to get the actual parameter names from the registered script function
 	paramNames := make([]string, argCount)
@@ -1028,8 +1144,10 @@ func (exec *Executor) handleSetField(stack *Stack, instr *instruction.Instructio
 	structInterface := stack.Pop()
 
 	// Debug information
-	fmt.Printf("SET_FIELD: struct = %v (type %T), field = %s, value = %v (type %T)\n",
-		structInterface, structInterface, fieldName, value, value)
+	if exec.vm.debug {
+		fmt.Printf("SET_FIELD: struct = %v (type %T), field = %s, value = %v (type %T)\n",
+			structInterface, structInterface, fieldName, value, value)
+	}
 
 	// Check that the struct is a map
 	structMap, ok := structInterface.(map[string]interface{})
@@ -1084,7 +1202,9 @@ func (exec *Executor) handleGetField(stack *Stack, instr *instruction.Instructio
 	structInterface := stack.Pop()
 
 	// Debug information
-	fmt.Printf("GET_FIELD: struct = %v (type %T), field = %s\n", structInterface, structInterface, fieldName)
+	if exec.vm.debug {
+		fmt.Printf("GET_FIELD: struct = %v (type %T), field = %s\n", structInterface, structInterface, fieldName)
+	}
 
 	// Check that the struct is a map
 	structMap, ok := structInterface.(map[string]interface{})
@@ -1133,7 +1253,9 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 	var receiver interface{}
 
 	// Debug information - print stack before processing
-	fmt.Printf("Stack before CALL_METHOD %s: %v\n", methodName, stack.Items())
+	if exec.vm.debug {
+		fmt.Printf("Stack before CALL_METHOD %s: %v\n", methodName, stack.Items())
+	}
 
 	// Check if Arg2 is a slice of arguments (direct values) or an int (arg count)
 	switch arg2 := instr.Arg2.(type) {
@@ -1153,10 +1275,11 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 			return 0, fmt.Errorf("stack underflow when calling method %s", methodName)
 		}
 
-		// Prepare arguments (excluding the receiver)
-		args = make([]interface{}, argCount)
-		for i := argCount - 1; i >= 0; i-- {
-			args[i] = stack.Pop()
+		// Prepare arguments (excluding the receiver) using the unified function
+		var err error
+		args, err = exec.prepareArguments(stack, argCount)
+		if err != nil {
+			return 0, fmt.Errorf("error preparing arguments for method %s: %w", methodName, err)
 		}
 
 		// Get the receiver (the struct instance)
@@ -1166,8 +1289,10 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 	}
 
 	// Debug information
-	fmt.Printf("Calling method %s with %d arguments\n", methodName, len(args))
-	fmt.Printf("Method %s receiver: %v (type %T), args: %v\n", methodName, receiver, receiver, args)
+	if exec.vm.debug {
+		fmt.Printf("Calling method %s with %d arguments\n", methodName, len(args))
+		fmt.Printf("Method %s receiver: %v (type %T), args: %v\n", methodName, receiver, receiver, args)
+	}
 
 	// First, try to find a method with the qualified name (e.g., "Person.GetName")
 	// This is for our new approach where structs are treated like packages
@@ -1180,7 +1305,7 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 			// Try to infer the type name from the context
 			// This is a heuristic approach - in a real implementation we would store type info better
 			for key := range structMap {
-				if key != "name" && key != "age" && key != "_type" && key != "width" && key != "height" && key != "radius" {
+				if key != "width" && key != "height" && key != "radius" && key != "_type" && key != "name" && key != "age" {
 					// Assume this is the type name
 					qualifiedMethodName = fmt.Sprintf("%s.%s", key, methodName)
 					break
@@ -1189,10 +1314,14 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 		}
 	}
 
-	fmt.Printf("Looking for registered function with key: %s\n", qualifiedMethodName)
+	if exec.vm.debug {
+		fmt.Printf("Looking for registered function with key: %s\n", qualifiedMethodName)
+	}
 	// Try to find the method by looking for a registered function with the qualified name
 	if fn, exists := vm.GetFunction(qualifiedMethodName); exists {
-		fmt.Printf("Found registered function with key: %s\n", qualifiedMethodName)
+		if exec.vm.debug {
+			fmt.Printf("Found registered function with key: %s\n", qualifiedMethodName)
+		}
 		// Prepare arguments including the receiver as the first argument
 		allArgs := make([]interface{}, len(args)+1)
 		allArgs[0] = receiver
@@ -1208,10 +1337,14 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 		if result != nil {
 			stack.Push(result)
 		}
-		fmt.Printf("Stack after CALL_METHOD %s (builtin): %v\n", methodName, stack.Items())
+		if exec.vm.debug {
+			fmt.Printf("Stack after CALL_METHOD %s (builtin): %v\n", methodName, stack.Items())
+		}
 		return pc + 1, nil
 	} else {
-		fmt.Printf("No registered function found with key: %s\n", qualifiedMethodName)
+		if exec.vm.debug {
+			fmt.Printf("No registered function found with key: %s\n", qualifiedMethodName)
+		}
 	}
 
 	// Check if it's a script-defined method
@@ -1231,12 +1364,16 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 	var foundKey string
 
 	for _, key := range functionKeys {
-		fmt.Printf("Looking for function with key: %s\n", key)
+		if exec.vm.debug {
+			fmt.Printf("Looking for function with key: %s\n", key)
+		}
 		if instructions, exists := vm.GetInstructionSet(key); exists {
 			functionInstructions = instructions
 			found = true
 			foundKey = key
-			fmt.Printf("Found function with key: %s, %d instructions\n", key, len(instructions))
+			if exec.vm.debug {
+				fmt.Printf("Found function with key: %s, %d instructions\n", key, len(instructions))
+			}
 			break
 		}
 	}
@@ -1256,7 +1393,9 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 		// For pointer receiver methods, we use the original struct
 		// Check if this is a pointer receiver method
 		isPointerReceiver := strings.HasPrefix(foundKey, "*")
-		fmt.Printf("Method %s is pointer receiver: %t\n", foundKey, isPointerReceiver)
+		if exec.vm.debug {
+			fmt.Printf("Method %s is pointer receiver: %t\n", foundKey, isPointerReceiver)
+		}
 
 		// If it's a value receiver method, create a copy of the struct
 		if !isPointerReceiver {
@@ -1267,7 +1406,9 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 					structCopy[k] = v
 				}
 				allArgs[0] = structCopy
-				fmt.Printf("Created copy of struct for value receiver: %v\n", structCopy)
+				if exec.vm.debug {
+					fmt.Printf("Created copy of struct for value receiver: %v\n", structCopy)
+				}
 			}
 		}
 
@@ -1277,18 +1418,24 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 
 		// Try to get the actual parameter names from the registered script function
 		scriptFunctions := vm.GetAllScriptFunctions()
-		fmt.Printf("Script functions: %v\n", scriptFunctions)
+		if exec.vm.debug {
+			fmt.Printf("Script functions: %v\n", scriptFunctions)
+		}
 		foundParamNames := false
 		for name, fnInfo := range scriptFunctions {
 			// Check if this function matches our method name
-			fmt.Printf("Checking function %s: key=%s, paramNames=%v\n", name, fnInfo.Key, fnInfo.ParamNames)
+			if exec.vm.debug {
+				fmt.Printf("Checking function %s: key=%s, paramNames=%v\n", name, fnInfo.Key, fnInfo.ParamNames)
+			}
 			if fnInfo.Key == foundKey {
 				// Use the parameter names from the function info
 				if len(fnInfo.ParamNames) > 0 {
 					paramNames = fnInfo.ParamNames
 					foundParamNames = true
 				}
-				fmt.Printf("Using paramNames from %s: %v\n", name, paramNames)
+				if exec.vm.debug {
+					fmt.Printf("Using paramNames from %s: %v\n", name, paramNames)
+				}
 				break
 			}
 		}
@@ -1344,7 +1491,9 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 			// Make sure we create the variable in the method context
 			methodCtx.CreateVariableWithType(paramName, arg, "unknown")
 			// Debug information
-			fmt.Printf("Setting parameter %s = %v (type %T)\n", paramName, arg, arg)
+			if exec.vm.debug {
+				fmt.Printf("Setting parameter %s = %v (type %T)\n", paramName, arg, arg)
+			}
 		}
 
 		// Execute the method using a new executor
@@ -1354,7 +1503,9 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 
 		// Debug information - print all variables in the method context
 		vars, _ := methodCtx.GetAllVariablesWithTypes()
-		fmt.Printf("Method context variables: %v\n", vars)
+		if exec.vm.debug {
+			fmt.Printf("Method context variables: %v\n", vars)
+		}
 
 		result, err := newExec.executeInstructions(functionInstructions)
 		if err != nil {
@@ -1365,7 +1516,9 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 		if result != nil {
 			stack.Push(result)
 		}
-		fmt.Printf("Stack after CALL_METHOD %s (script): %v\n", methodName, stack.Items())
+		if exec.vm.debug {
+			fmt.Printf("Stack after CALL_METHOD %s (script): %v\n", methodName, stack.Items())
+		}
 		return pc + 1, nil
 	} else {
 		// Try to find the method by looking for a registered function
@@ -1386,7 +1539,9 @@ func (exec *Executor) handleCallMethod(stack *Stack, instr *instruction.Instruct
 			if result != nil {
 				stack.Push(result)
 			}
-			fmt.Printf("Stack after CALL_METHOD %s (builtin2): %v\n", methodName, stack.Items())
+			if exec.vm.debug {
+				fmt.Printf("Stack after CALL_METHOD %s (builtin2): %v\n", methodName, stack.Items())
+			}
 			return pc + 1, nil
 		} else {
 			return 0, fmt.Errorf("undefined method: %s", methodName)
@@ -1427,10 +1582,48 @@ func (exec *Executor) handleImport(stack *Stack, instr *instruction.Instruction,
 		return 0, fmt.Errorf("invalid package name")
 	}
 
+	// Check if this is a builtin module and register it on-demand
+	modules := builtin.ListAllModules()
+	for _, moduleName := range modules {
+		// Match either by module name or by import path
+		if moduleName == pkgName || moduleName == importPath {
+			if _, exists := exec.vm.GetModule(moduleName); exists {
+				break
+			}
+			// Register the module with the VM
+			moduleExecutor, exists := builtin.GetModuleExecutor(moduleName)
+			if exists {
+				exec.vm.RegisterModule(moduleName, moduleExecutor)
+			}
+			break
+		}
+	}
+
 	// In the VM context, we can't directly access the module manager
 	// The module importing should be handled at the Script level
 	// For now, we'll just create a placeholder variable
 	exec.vm.currentCtx.CreateVariableWithType(pkgName, importPath, "module")
 
 	return pc + 1, nil
+}
+
+// prepareArguments prepares arguments from the stack
+func (exec *Executor) prepareArguments(stack *Stack, argCount int) ([]interface{}, error) {
+	if stack.Len() < argCount {
+		return nil, fmt.Errorf("stack underflow when preparing arguments")
+	}
+
+	args := make([]interface{}, argCount)
+	for i := argCount - 1; i >= 0; i-- {
+		args[i] = stack.Pop()
+	}
+
+	return args, nil
+}
+
+// pushArgumentsBack pushes arguments back to the stack
+func (exec *Executor) pushArgumentsBack(stack *Stack, args []interface{}) {
+	for _, arg := range args {
+		stack.Push(arg)
+	}
 }
