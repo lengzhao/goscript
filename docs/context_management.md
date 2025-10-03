@@ -1,61 +1,61 @@
-# GoScript 上下文管理设计文档
+# GoScript Context Management Design Document
 
-## 1. 概述
+## 1. Overview
 
-本文档详细描述了GoScript中基于key的上下文管理机制设计。该机制旨在提供一种更精确和高效的作用域管理方式，通过为每个作用域分配唯一的key标识符，实现变量、函数和类型的隔离与查找。
+This document details the design of GoScript's key-based context management mechanism. This mechanism aims to provide a more precise and efficient scope management approach by assigning unique key identifiers to each scope, achieving isolation and lookup of variables, functions, and types.
 
-## 2. 设计目标
+## 2. Design Goals
 
-1. **唯一标识**：每个作用域都有唯一的key标识符
-2. **层级管理**：支持作用域的嵌套和层级关系
-3. **高效查找**：通过key快速定位和访问上下文
-4. **运行时支持**：在运行时创建对应的runCtx对象
-5. **兼容性**：与现有编译和执行流程无缝集成
+1. **Unique Identification**: Each scope has a unique key identifier
+2. **Hierarchical Management**: Support for nested and hierarchical scope relationships
+3. **Efficient Lookup**: Rapid location and access to contexts through keys
+4. **Runtime Support**: Creation of corresponding Context objects at runtime
+5. **Compatibility**: Seamless integration with existing compilation and execution processes
 
-## 3. 核心概念
+## 3. Core Concepts
 
-### 3.1 作用域Key命名规范
+### 3.1 Scope Key Naming Convention
 
-每个作用域都有一个唯一的key，遵循以下命名规范：
+Each scope has a unique key following this naming convention:
 
-- **全局作用域**：`main`
-- **主函数**：`main.main`
-- **普通函数**：`main.FunctionName`
-- **结构体方法**：`main.StructName.MethodName`
-- **其他模块**：`moduleName.FunctionName`
+- **Global scope**: `main`
+- **Main function**: `main.main`
+- **Regular functions**: `main.FunctionName`
+- **Struct methods**: `main.StructName.MethodName`
+- **Other modules**: `moduleName.FunctionName`
 
-### 3.2 编译时上下文(Compile Context)
+### 3.2 Compile-time Context (Compile Context)
 
-在编译阶段，每个作用域都有对应的编译时上下文，包含：
-- 唯一的key标识符
-- 父级上下文的引用
-- 当前作用域内的变量、函数、类型信息
+During compilation, each scope has a corresponding compile-time context containing:
+- Unique key identifier
+- Reference to parent context
+- Variable, function, and type information within the current scope
 
-### 3.3 运行时上下文(Runtime Context)
+### 3.3 Runtime Context (Runtime Context)
 
-在运行时，每个作用域对应一个runCtx对象，包含：
-- 唯一的key标识符
-- 父级runCtx的引用
-- 当前作用域内的局部变量
+At runtime, each scope corresponds to a Context object containing:
+- Unique key identifier
+- Reference to parent Context
+- Local variables within the current scope
 
-## 4. 实现细节
+## 4. Implementation Details
 
-### 4.1 编译器修改
+### 4.1 Compiler Modifications
 
-#### 4.1.1 作用域路径跟踪
+#### 4.1.1 Scope Path Tracking
 
-编译器需要维护当前的作用域路径，用于生成唯一的key：
+The compiler needs to maintain the current scope path for generating unique keys:
 
 ```go
 type Compiler struct {
     // ... existing fields ...
-    currentScopePath []string // 跟踪当前作用域路径，如 ["main", "main"] 表示主函数
+    currentScopePath []string // Track current scope path, e.g., ["main", "main"] for main function
 }
 ```
 
-#### 4.1.2 作用域Key生成
+#### 4.1.2 Scope Key Generation
 
-提供辅助函数生成当前作用域的唯一key：
+Provide helper functions to generate unique keys for the current scope:
 
 ```go
 func (c *Compiler) getCurrentScopeKey() string {
@@ -66,123 +66,133 @@ func (c *Compiler) getCurrentScopeKey() string {
 }
 ```
 
-#### 4.1.3 BlockStmt编译
+#### 4.1.3 BlockStmt Compilation
 
-在编译BlockStmt时，需要：
-1. 分析当前上下文的key
-2. 生成进入作用域的指令
-3. 编译块内的语句
-4. 生成退出作用域的指令
+When compiling BlockStmt, it's necessary to:
+1. Analyze the current context's key
+2. Generate scope management instructions
+3. Compile statements within the block
+4. Generate scope exit instructions
 
-### 4.2 虚拟机修改
+### 4.2 Virtual Machine Modifications
 
-#### 4.2.1 上下文映射
+#### 4.2.1 Context Management
 
-虚拟机维护一个key到RuntimeContext的映射：
+The virtual machine uses a hierarchical Context system:
 
 ```go
 type VM struct {
     // ... existing fields ...
-    ctxMap   map[string]*RuntimeContext // key到上下文的映射
-    ctxStack []*RuntimeContext          // 上下文栈，用于作用域嵌套
-    currentCtx *RuntimeContext          // 当前上下文
+    GlobalCtx *context.Context  // Global context
+    currentCtx *context.Context // Current context
 }
 ```
 
-#### 4.2.2 RuntimeContext结构
+#### 4.2.2 Context Structure
 
 ```go
-type RuntimeContext struct {
-    Key    string           // 唯一标识符
-    Parent *RuntimeContext  // 父级上下文引用
-    Locals map[string]interface{} // 局部变量映射
+type Context struct {
+    // Path key for identifying the context (e.g., "main.function.loop")
+    pathKey string
+
+    // Parent context reference
+    parent *Context
+
+    // Variables in this context
+    variables map[string]interface{}
+
+    // Variable types in this context
+    types map[string]string
+
+    // Child contexts
+    children map[string]*Context
 }
 ```
 
-#### 4.2.3 作用域管理指令
+#### 4.2.3 Scope Management Instructions
 
-新增两个操作码用于管理基于key的作用域：
+Scope management is handled through context operations:
 
 ```go
 const (
     // ... existing opcodes ...
-    OpEnterScopeWithKey // 进入指定key的作用域
-    OpExitScopeWithKey  // 退出指定key的作用域
+    OpEnterScopeWithKey // Enter scope with specified key
+    OpExitScopeWithKey  // Exit scope with specified key
 )
 ```
 
-### 4.3 指令处理
+### 4.3 Instruction Processing
 
 #### 4.3.1 OpEnterScopeWithKey
 
-处理进入指定key作用域的指令：
-1. 从指令参数获取作用域key
-2. 将当前上下文压入栈
-3. 查找或创建对应key的上下文
-4. 设置为当前上下文
+Processing instructions for entering a scope with a specified key:
+1. Get scope key from instruction parameters
+2. Save current context
+3. Look up or create corresponding context for the key
+4. Set as current context
 
 #### 4.3.2 OpExitScopeWithKey
 
-处理退出指定key作用域的指令：
-1. 从指令参数获取作用域key
-2. 验证当前是否在正确的上下文中
-3. 从栈中弹出父级上下文
-4. 设置为当前上下文
+Processing instructions for exiting a scope with a specified key:
+1. Get scope key from instruction parameters
+2. Verify that current context is correct
+3. Restore parent context
+4. Set as current context
 
-## 5. 执行流程
+## 5. Execution Flow
 
-### 5.1 编译阶段
+### 5.1 Compilation Phase
 
-1. 编译器在编译函数时，将函数名添加到作用域路径
-2. 编译BlockStmt时，生成作用域管理指令
-3. 为每个作用域生成唯一的key标识符
+1. Compiler adds function name to scope path when compiling functions
+2. Generate scope management instructions when compiling BlockStmt
+3. Generate unique key identifiers for each scope
 
-### 5.2 运行时阶段
+### 5.2 Runtime Phase
 
-1. 虚拟机执行OpEnterScopeWithKey指令时创建runCtx
-2. 变量存储和查找都在当前runCtx中进行
-3. 虚拟机执行OpExitScopeWithKey指令时回退到父级上下文
+1. Virtual machine creates Context when executing OpEnterScopeWithKey instruction
+2. Variable storage and lookup occur in the current Context
+3. Virtual machine reverts to parent context when executing OpExitScopeWithKey instruction
 
-## 6. 示例
+## 6. Examples
 
-### 6.1 代码示例
+### 6.1 Code Example
 
 ```go
 package main
 
 func main() {
-    x := 10  // 变量存储在key为"main.main"的runCtx中
+    x := 10  // Variable stored in Context with key "main.main"
     
     func() {
-        y := 20  // 变量存储在匿名函数的runCtx中，父级为"main.main"
+        y := 20  // Variable stored in Context of anonymous function, parent is "main.main"
     }()
 }
 ```
 
-### 6.2 生成的指令序列
+### 6.2 Generated Instruction Sequence
 
 ```
-OpEnterScopeWithKey "main.main"  // 进入主函数作用域
-OpLoadConst 10                   // 加载常量10
-OpStoreName "x"                  // 存储变量x
-OpEnterScopeWithKey "main.main.func1"  // 进入匿名函数作用域
-OpLoadConst 20                   // 加载常量20
-OpStoreName "y"                  // 存储变量y
-OpExitScopeWithKey "main.main.func1"   // 退出匿名函数作用域
-OpExitScopeWithKey "main.main"         // 退出主函数作用域
+OpEnterScopeWithKey "main.main"  // Enter main function scope
+OpLoadConst 10                   // Load constant 10
+OpStoreName "x"                  // Store variable x
+OpEnterScopeWithKey "main.main.func1"  // Enter anonymous function scope
+OpLoadConst 20                   // Load constant 20
+OpStoreName "y"                  // Store variable y
+OpExitScopeWithKey "main.main.func1"   // Exit anonymous function scope
+OpExitScopeWithKey "main.main"         // Exit main function scope
 ```
 
-## 7. 优势
+## 7. Advantages
 
-1. **精确的作用域管理**：每个作用域都有唯一标识，避免命名冲突
-2. **高效的变量查找**：通过key直接定位上下文，减少查找时间
-3. **清晰的层级关系**：父子上下文引用明确，便于变量查找和作用域管理
-4. **模块化支持**：天然支持不同模块的隔离
-5. **调试友好**：通过key可以清楚地知道当前所处的作用域
+1. **Precise Scope Management**: Each scope has a unique identifier, avoiding naming conflicts
+2. **Efficient Variable Lookup**: Direct context location through keys reduces lookup time
+3. **Clear Hierarchical Relationships**: Parent-child context references are clear, facilitating variable lookup and scope management
+4. **Modular Support**: Natural support for isolation of different modules
+5. **Debugging Friendly**: Keys clearly indicate the current scope
 
-## 8. 注意事项
+## 8. Considerations
 
-1. **性能考虑**：需要平衡上下文管理的开销和查找效率
-2. **内存管理**：及时清理不再使用的上下文对象
-3. **错误处理**：确保作用域切换的正确性，避免栈溢出或下溢
-4. **兼容性**：确保新机制与现有代码兼容
+1. **Performance Considerations**: Need to balance context management overhead and lookup efficiency
+2. **Memory Management**: Timely cleanup of unused context objects
+3. **Error Handling**: Ensure correct scope switching to avoid stack overflow or underflow
+4. **Compatibility**: Ensure new mechanisms are compatible with existing code

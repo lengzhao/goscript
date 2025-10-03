@@ -67,7 +67,7 @@ func NewVM() *VM {
 		modules:             make(map[string]types.ModuleExecutor),
 		instructions:        make([]*instruction.Instruction, 0),
 		GlobalCtx:           context.NewContext("global", nil), // Global context with no parent
-		maxInstructions:     1000,                              // Default limit of 10,000 instructions
+		maxInstructions:     10000,                             // Default limit of 10,000 instructions
 	}
 	return vm
 }

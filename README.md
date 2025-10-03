@@ -1,56 +1,36 @@
-# GoScript - Go兼容脚本引擎
+# GoScript - Go-Compatible Scripting Engine
 
-GoScript是一个兼容Go标准语法的脚本引擎，它允许你在Go应用程序中动态执行Go代码。
+GoScript is a scripting engine compatible with Go standard syntax that allows you to dynamically execute Go code within Go applications.
 
-## 架构设计
+[ZH 中文版](README_cn.md)
 
-GoScript的完整技术文档请参见 [综合技术文档](docs/GoScript_Comprehensive_Documentation.md)。
+## Features
 
-## 特性
+- **Syntax Compatibility**: As compatible as possible with Go standard syntax
+- **Modular Design**: Separation of components such as lexical analysis, syntax analysis, and AST generation
+- **Extensibility**: Support for custom functions and modules
+- **Reuse of Go Native Modules**: Lexical analysis, syntax analysis, etc. directly reuse Go standard library
 
-- **语法兼容性**：尽可能兼容Go标准语法
-- **模块化设计**：词法分析、语法分析、AST生成等组件分离
-- **可扩展性**：支持自定义函数和模块
-- **安全性**：提供执行时间和内存使用限制
-- **复用Go原生模块**：词法分析、语法分析等直接复用Go标准库
+## Installation
 
-## 架构
-
-GoScript的架构包括以下核心组件：
-
-1. **词法分析器 (parser)**：使用Go标准库的`go/scanner`进行词法分析
-2. **语法分析器 (parser)**：使用Go标准库的`go/parser`进行语法分析
-3. **抽象语法树 (ast)**：使用Go标准库的`go/ast`处理AST节点
-4. **编译器 (compiler)**：将AST编译为可执行的中间表示（字节码）
-5. **运行时 (runtime)**：管理变量、函数、类型和模块
-6. **虚拟机 (vm)**：执行编译后的字节码
-7. **类型系统 (types)**：统一的类型系统，所有类型都实现IType接口
-8. **符号表 (symbol)**：管理变量、函数、类型等符号信息
-9. **模块管理 (module)**：管理不同模块及其指令集
-10. **执行上下文 (context)**：管理脚本执行时的变量作用域和栈
-
-## 安装
-
-```
+```bash
 go get github.com/lengzhao/goscript
 ```
 
-## 快速开始
+## Quick Start
 
-### 基本用法
+### Basic Usage
 
-```
+```go
 package main
 
 import (
     "fmt"
-    "context"
-    "time"
     "github.com/lengzhao/goscript"
 )
 
 func main() {
-    // 创建脚本
+    // Create script
     source := `
 package main
 
@@ -62,44 +42,38 @@ func main() {
 `
     
     script := goscript.NewScript([]byte(source))
+    script.SetDebug(true) // Enable debug mode
     
-    // 设置安全上下文
-    securityCtx := &goscript.SecurityContext{
-        MaxExecutionTime: 5 * time.Second,
-        MaxMemoryUsage:   10 * 1024 * 1024, // 10MB
-    }
-    script.SetSecurityContext(securityCtx)
-    
-    // 执行脚本
-    result, err := script.RunContext(context.Background())
+    // Execute script
+    result, err := script.Run()
     if err != nil {
-        fmt.Printf("执行错误: %v\n", err)
+        fmt.Printf("Execution error: %v\n", err)
         return
     }
     
-    fmt.Printf("执行结果: %v\n", result) // 输出: 30
+    fmt.Printf("Execution result: %v\n", result) // Output: 30
 }
 ```
 
-### 自定义函数
+### Custom Functions
 
-```
-// 创建自定义函数
+```go
+// Create custom function
 func customFunction(args ...interface{}) (interface{}, error) {
     if len(args) != 2 {
-        return nil, fmt.Errorf("需要2个参数")
+        return nil, fmt.Errorf("requires 2 arguments")
     }
     
     a, ok1 := args[0].(int)
     b, ok2 := args[1].(int)
     if !ok1 || !ok2 {
-        return nil, fmt.Errorf("参数必须是整数")
+        return nil, fmt.Errorf("arguments must be integers")
     }
     
     return a * b, nil
 }
 
-// 使用自定义函数
+// Using custom functions
 func main() {
     source := `
 package main
@@ -111,230 +85,221 @@ func main() {
 `
     
     script := goscript.NewScript([]byte(source))
-    script.AddFunction("customMultiply", runtime.NewBuiltInFunction("customMultiply", customFunction))
     
-    result, err := script.Run()
+    // Register the custom function
+    err := script.AddFunction("customMultiply", func(args ...interface{}) (interface{}, error) {
+        if len(args) != 2 {
+            return nil, fmt.Errorf("customMultiply function requires 2 arguments")
+        }
+        a, ok1 := args[0].(int)
+        b, ok2 := args[1].(int)
+        if !ok1 || !ok2 {
+            return nil, fmt.Errorf("customMultiply function requires integer arguments")
+        }
+        return a * b, nil
+    })
     if err != nil {
-        fmt.Printf("执行错误: %v\n", err)
+        fmt.Printf("Failed to register custom function: %v\n", err)
         return
     }
     
-    fmt.Printf("执行结果: %v\n", result) // 输出: 30
+    result, err := script.Run()
+    if err != nil {
+        fmt.Printf("Execution error: %v\n", err)
+        return
+    }
+    
+    fmt.Printf("Execution result: %v\n", result) // Output: 30
 }
 ```
 
-### 使用内置模块
+### Using Built-in Modules
 
-GoScript提供了几个内置模块，包括`math`、`strings`和`json`：
+GoScript provides several built-in modules, including `math`, `strings`, `fmt`, and `json`:
 
-```
+```go
 func main() {
-    // 使用strings模块
-    lowerStr := strings.toLower("HELLO WORLD")
-    hasWorld := strings.contains("hello world", "world")
-    
-    // 使用json模块
-    data := map[string]interface{}{"name": "John", "age": 30}
-    jsonStr := json.marshal(data)
-    parsedData := json.unmarshal(jsonStr)
+    // Using strings module
+    source := `
+package main
+
+import "strings"
+
+func main() {
+    lowerStr := strings.ToLower("HELLO WORLD")
+    hasWorld := strings.Contains("hello world", "world")
     
     return map[string]interface{}{
         "lower": lowerStr,
         "contains": hasWorld,
-        "json": jsonStr,
-        "parsed": parsedData,
     }
 }
-```
-
-要使用这些模块，需要在安全上下文中允许它们：
-
-```
-securityCtx := &goscript.SecurityContext{
-    AllowedModules: []string{"strings", "json"},
-}
-script.SetSecurityContext(securityCtx)
-```
-
-## 核心组件
-
-### 词法分析器
-
-词法分析器将源代码分解为标记(tokens)：
-
-```
-tokens, err := script.Lex()
-if err != nil {
-    // 处理错误
-}
-
-for _, token := range tokens {
-    fmt.Printf("Token: %s, Value: %s\n", token.TokenType(), token.Value())
+`
+    
+    script := goscript.NewScript([]byte(source))
+    
+    // Register builtin modules
+    modules := []string{"strings"}
+    for _, moduleName := range modules {
+        moduleExecutor, exists := builtin.GetModuleExecutor(moduleName)
+        if exists {
+            script.RegisterModule(moduleName, moduleExecutor)
+        }
+    }
+    
+    result, err := script.Run()
+    if err != nil {
+        fmt.Printf("Execution error: %v\n", err)
+        return
+    }
+    
+    fmt.Printf("Execution result: %v\n", result)
 }
 ```
 
-### 语法分析器
+### Calling Functions Directly
 
-语法分析器将标记转换为抽象语法树(AST)：
-
-```
-ast, err := script.Parse()
-if err != nil {
-    // 处理错误
+```go
+func main() {
+    // Create a new script
+    script := goscript.NewScript([]byte{})
+    
+    // Add a function using AddFunction method that uses arguments
+    script.AddFunction("addFunc", func(args ...interface{}) (interface{}, error) {
+        if len(args) != 2 {
+            return nil, fmt.Errorf("addFunc requires 2 arguments")
+        }
+        a, ok1 := args[0].(int)
+        b, ok2 := args[1].(int)
+        if !ok1 || !ok2 {
+            return nil, fmt.Errorf("addFunc requires integer arguments")
+        }
+        return a + b, nil
+    })
+    
+    // Call the function directly
+    result, err := script.CallFunction("addFunc", 5, 6)
+    if err != nil {
+        fmt.Printf("Failed to call function: %v\n", err)
+        return
+    }
+    
+    fmt.Printf("Function result: %v\n", result) // Output: 11
 }
-
-// 遍历AST节点
-ast.Inspect(ast, func(n ast.Node) bool {
-    // 处理节点
-    return true
-})
 ```
 
-### 编译器 (Compiler)
+## Core Components
 
-编译器将AST编译为字节码：
+### Script
 
-```
-// 创建编译器
-compiler := compiler.NewCompiler(runtime)
+The main interface for the GoScript engine. Key methods include:
 
-// 编译AST
-bytecode, constants, err := compiler.Compile(astFile)
-if err != nil {
-    // 处理错误
-}
+- `NewScript(source []byte) *Script` - Creates a new script
+- `Run() (interface{}, error)` - Executes the script
+- `AddFunction(name string, execFn vm.ScriptFunction) error` - Adds a custom function
+- `CallFunction(name string, args ...interface{}) (interface{}, error)` - Calls a function directly
+- `SetDebug(debug bool)` - Enables or disables debug mode
+- `RegisterModule(moduleName string, executor types.ModuleExecutor)` - Registers a module
+- `SetMaxInstructions(max int64)` - Sets the maximum number of instructions (default: 10000)
 
-// bytecode包含编译后的指令
-// constants包含常量池
-```
+### Virtual Machine (VM)
 
-### 运行时 (Runtime)
+The virtual machine is responsible for executing compiled bytecode:
 
-运行时管理脚本执行环境中的变量、函数、类型和模块：
+```go
+// Create virtual machine
+vmInstance := vm.NewVM()
 
-```
-// 创建运行时
-rt := runtime.NewRuntime()
-
-// 注册自定义函数
-customFunc := runtime.NewBuiltInFunction("multiply", func(args ...interface{}) (interface{}, error) {
-    // 函数实现
+// Register function
+vmInstance.RegisterFunction("multiply", func(args ...interface{}) (interface{}, error) {
+    // Function implementation
     return result, nil
 })
-rt.RegisterFunction("multiply", customFunc)
 
-// 设置变量
-rt.SetVariable("testVar", 42)
+// Call function
+result, err := vmInstance.Execute("main.main", arg1, arg2)
+
+// Get function
+fn, exists := vmInstance.GetFunction("functionName")
 ```
 
-### 虚拟机 (VM)
+### Built-in Modules
 
-虚拟机负责执行编译后的字节码：
+GoScript provides several built-in modules:
 
-```
-// 创建虚拟机
-vmInstance := vm.NewVM(runtime)
+1. **strings** - String manipulation functions
+2. **math** - Mathematical functions
+3. **fmt** - Formatting functions
+4. **json** - JSON encoding/decoding functions
 
-// 执行二进制操作
-result, err := vmInstance.BinaryOperation(10, 20, "+")
+## Security Features
 
-// 调用函数
-result, err := vmInstance.CallFunction("multiply", 5, 6)
+GoScript provides multiple security mechanisms to prevent script abuse of system resources:
 
-// 栈操作
-vmInstance.Push(42)
-value := vmInstance.Pop()
-```
+### 1. Instruction Count Limit
+Limit the maximum number of instructions a script can execute. The default limit is 10,000 instructions:
 
-## 安全特性
+```go
+script := goscript.NewScript(source)
+// Default is 10,000 instructions
+// script.SetMaxInstructions(10000)
 
-GoScript 提供了多种安全机制来防止脚本滥用系统资源：
+// Set custom limit
+script.SetMaxInstructions(5000) // Limit to 5,000 instructions
 
-### 1. 执行时间限制
-通过 SecurityContext.MaxExecutionTime 设置脚本最大执行时间，防止长时间运行的脚本阻塞系统。
-
-### 2. 内存使用限制
-通过 SecurityContext.MaxMemoryUsage 限制脚本可以使用的最大内存量。
-
-### 3. 指令数限制
-通过 SecurityContext.MaxInstructions 限制脚本可以执行的最大指令数，防止脚本陷入死循环。
-
-### 4. 模块访问控制
-通过 SecurityContext.AllowedModules 和 SecurityContext.ForbiddenKeywords 控制脚本可以访问的模块和关键字。
-
-### 5. 跨模块访问控制
-通过 SecurityContext.AllowCrossModule 控制脚本是否可以访问其他模块。
-
-```
-securityCtx := &goscript.SecurityContext{
-    MaxExecutionTime: 5 * time.Second,     // 最大执行时间
-    MaxMemoryUsage:   10 * 1024 * 1024,    // 最大内存使用 (10MB)
-    AllowedModules:   []string{"fmt"},     // 允许的模块
-    ForbiddenKeywords: []string{"unsafe"}, // 禁止的关键字
-}
-script.SetSecurityContext(securityCtx)
+// Remove limit
+script.SetMaxInstructions(0) // No limit
 ```
 
-## 测试
+### 2. Module Access Control
+Control which modules scripts can access by selectively registering modules.
 
-运行所有测试：
+## Testing
 
-```
+Run all tests:
+
+```bash
 go test ./...
 ```
 
-运行特定包的测试：
+Run tests for specific packages:
 
-```
-go test ./lexer -v
-go test ./parser -v
-go test ./ast -v
-go test ./compiler -v
-go test ./runtime -v
-go test ./vm -v
+```bash
+go test ./test -v
 ```
 
-## 示例
+## Examples
 
-查看`examples/`目录中的示例程序：
+Check the example programs in the `examples/` directory:
 
-- `examples/basic/` - 基本用法示例
-- `examples/custom_functions/` - 自定义函数示例
-- `examples/compiler/` - 编译器功能示例
-- `examples/security/` - 安全机制示例
-- `examples/custom_types/` - 自定义类型和模块示例
-- `examples/error_handling/` - 错误处理示例
-- `examples/comprehensive/` - 综合功能示例
-- `examples/modules/` - 模块化示例
+- `examples/basic/` - Basic usage examples
+- `examples/custom_function/` - Custom function examples
+- `examples/builtin_functions/` - Built-in function examples
+- `examples/modules/` - Module usage examples
+- `examples/interface_example/` - Interface examples
+- `examples/struct_example/` - Struct examples
 
-运行演示程序：
+Run examples:
 
-```
-cd cmd/demo
-go run main.go
+```bash
+cd examples/custom_function
+go run function_demo.go
 ```
 
-运行特定示例：
+## Contributing
 
-```
-cd examples/compiler
-go run main.go
-```
+Contributions are welcome! Please follow these steps:
 
-## 贡献
+1. Fork the project
+2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-欢迎贡献代码！请遵循以下步骤：
+## License
 
-1. Fork项目
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启Pull Request
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
 
-## 许可证
+## Contact
 
-本项目采用MIT许可证 - 查看[LICENSE](LICENSE)文件了解详情
-
-## 联系
-
-项目链接: [https://github.com/lengzhao/goscript](https://github.com/lengzhao/goscript)
+Project link: [https://github.com/lengzhao/goscript](https://github.com/lengzhao/goscript)
