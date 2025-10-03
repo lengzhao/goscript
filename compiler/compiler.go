@@ -36,6 +36,9 @@ type Compiler struct {
 
 	// Imported modules map (package name -> import path)
 	importedModules map[string]string
+
+	// Label positions map (label name -> instruction index)
+	labelPositions map[string]int
 }
 
 // NewCompiler creates a new compiler with key-based instruction management
@@ -50,6 +53,7 @@ func NewCompiler(vmInstance *vm.VM) *Compiler {
 		keyCounter:          0,
 		currentInstructions: make([]*instruction.Instruction, 0),
 		importedModules:     make(map[string]string),
+		labelPositions:      make(map[string]int),
 	}
 }
 
@@ -379,6 +383,14 @@ func (c *Compiler) compileStmt(stmt ast.Stmt) error {
 		if genDecl, ok := s.Decl.(*ast.GenDecl); ok {
 			return c.compileGenDecl(genDecl)
 		}
+	case *ast.SwitchStmt:
+		return c.compileSwitchStmt(s)
+	case *ast.LabeledStmt:
+		// Handle labeled statements
+		return c.compileLabeledStmt(s)
+	case *ast.BranchStmt:
+		// Handle branch statements (goto, break, continue, fallthrough)
+		return c.compileBranchStmt(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -668,43 +680,48 @@ func (c *Compiler) compileReturnStmt(stmt *ast.ReturnStmt) error {
 	return nil
 }
 
-// compileIfStmt compiles an if statement with key-based block management
+// compileIfStmt compiles an if statement using goto-based approach
 func (c *Compiler) compileIfStmt(stmt *ast.IfStmt) error {
 	// Compile the condition
 	if err := c.compileExpr(stmt.Cond); err != nil {
 		return err
 	}
 
-	// Emit a conditional jump instruction (placeholder target)
-	jumpIfInstr := instruction.NewInstruction(instruction.OpJumpIf, 0, nil) // Placeholder target
-	c.emitInstruction(jumpIfInstr)
+	// Generate labels for true and false branches
+	trueLabel := c.generateKey("if_true")
+	falseLabel := c.generateKey("if_false")
+	endLabel := c.generateKey("if_end")
 
-	// Compile the if body with its own scope
-	if err := c.compileBlockStmt(stmt.Body); err != nil {
-		return err
-	}
+	// Emit a conditional jump to the false branch if condition is false
+	// JUMP_IF jumps when the condition is FALSE, so if condition is false, jump to falseLabel
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJumpIf, falseLabel, nil))
 
-	// If there's an else block, we need to jump over it at the end of the if block
-	var elseJumpInstr *instruction.Instruction
+	// If we reach here, condition was TRUE, so jump to true branch
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, trueLabel, nil))
+
+	// False branch (else part)
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, falseLabel, nil))
 	if stmt.Else != nil {
-		// Emit an unconditional jump to skip the else block
-		elseJumpInstr = instruction.NewInstruction(instruction.OpJump, 0, nil) // Placeholder target
-		c.emitInstruction(elseJumpInstr)
-	}
-
-	// Update the conditional jump target to after the if body
-	jumpIfInstr.Arg = len(c.currentInstructions)
-
-	// Compile the else block if it exists
-	if stmt.Else != nil {
+		// Compile the else block
 		if elseStmt, ok := stmt.Else.(*ast.BlockStmt); ok {
 			if err := c.compileBlockStmt(elseStmt); err != nil {
 				return err
 			}
-			// Update the else jump target to after the else block
-			elseJumpInstr.Arg = len(c.currentInstructions)
 		}
 	}
+	// Jump to end after executing else block
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, endLabel, nil))
+
+	// True branch (if body)
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, trueLabel, nil))
+	if err := c.compileBlockStmt(stmt.Body); err != nil {
+		return err
+	}
+	// Jump to end after executing if body
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, endLabel, nil))
+
+	// End of if statement
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, endLabel, nil))
 
 	return nil
 }
@@ -1115,6 +1132,9 @@ func (c *Compiler) emitInstruction(instr *instruction.Instruction) {
 
 // transferInstructions transfers all compiled instructions from the compile context to the VM
 func (c *Compiler) transferInstructions() error {
+	// First, resolve label positions for goto instructions
+	c.resolveLabelPositions()
+
 	// Transfer instructions from the compile context
 	instructions := c.compileContext.GetAllInstructions()
 
@@ -1126,5 +1146,213 @@ func (c *Compiler) transferInstructions() error {
 		c.vm.AddInstructionSet(key, instrs)
 	}
 
+	return nil
+}
+
+// resolveLabelPositions resolves label positions for goto instructions
+func (c *Compiler) resolveLabelPositions() {
+	// Get all instruction sets
+	allInstructions := c.compileContext.GetAllInstructions()
+
+	// Process each instruction set
+	for key, instructions := range allInstructions {
+		// Create a map of label names to their positions within this instruction set
+		labelMap := make(map[string]int)
+
+		// First pass: collect all label positions
+		for i, instr := range instructions {
+			if instr.Op == instruction.OpLabel {
+				if labelName, ok := instr.Arg.(string); ok {
+					labelMap[labelName] = i
+				}
+			}
+		}
+
+		// Second pass: resolve goto and jumpif instructions
+		for _, instr := range instructions {
+			if instr.Op == instruction.OpJump || instr.Op == instruction.OpJumpIf {
+				if labelName, ok := instr.Arg.(string); ok {
+					if targetPos, exists := labelMap[labelName]; exists {
+						// Update the instruction with the actual target position
+						instr.Arg = targetPos
+					} else {
+						// Label not found in current scope, check if it's a forward reference
+						// For now, we'll leave it as is and let the VM handle it
+						fmt.Printf("Warning: Label '%s' not found in scope '%s'\n", labelName, key)
+					}
+				}
+			}
+		}
+	}
+}
+
+// compileSwitchStmt compiles a switch statement using goto-based approach
+func (c *Compiler) compileSwitchStmt(stmt *ast.SwitchStmt) error {
+	// Generate a unique scope key for this switch statement
+	scopeKey := c.generateKey("switch")
+
+	// Emit instruction to enter the switch scope
+	c.emitInstruction(instruction.NewInstruction(instruction.OpEnterScopeWithKey, scopeKey, nil))
+
+	// Compile the switch tag (expression to switch on) and store it in a variable
+	var tagVarName string
+	if stmt.Tag != nil {
+		// Compile the tag expression
+		if err := c.compileExpr(stmt.Tag); err != nil {
+			return err
+		}
+
+		// Store the tag value in a temporary variable
+		tagVarName = c.generateKey("switch_tag")
+		c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, tagVarName, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, tagVarName, nil))
+	}
+
+	// Generate labels for cases
+	caseLabels := make([]string, len(stmt.Body.List))
+	defaultLabel := ""
+	endLabel := c.generateKey("end_switch")
+
+	// First pass: generate labels
+	for i, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok {
+			return fmt.Errorf("unexpected clause type in switch: %T", clause)
+		}
+
+		if len(caseClause.List) == 0 {
+			// Default case
+			defaultLabel = c.generateKey("default")
+			caseLabels[i] = defaultLabel
+		} else {
+			// Regular case
+			caseLabels[i] = c.generateKey("case")
+		}
+	}
+
+	// If no default case, use endLabel as default
+	if defaultLabel == "" {
+		defaultLabel = endLabel
+	}
+
+	// Generate condition checks and jumps
+	for i, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok {
+			return fmt.Errorf("unexpected clause type in switch: %T", clause)
+		}
+
+		if len(caseClause.List) == 0 {
+			// Default case - no condition check needed
+			continue
+		} else {
+			// Regular case with conditions
+			// For each expression in the case list, check if it matches the tag
+			for _, expr := range caseClause.List {
+				// Load the tag value
+				if tagVarName != "" {
+					c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, tagVarName, nil))
+				}
+
+				// Compile the case expression
+				if err := c.compileExpr(expr); err != nil {
+					return err
+				}
+
+				// Emit a binary equality operation
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpEqual, nil))
+
+				// Emit a conditional jump to the case body if the condition is true
+				// Since JUMP_IF jumps when the condition is FALSE, we need to invert our logic.
+				// We want to jump to the case body when the condition is TRUE.
+				// So we use a trick: we put the jump to the case body AFTER the JUMP_IF instruction.
+				// If the condition is TRUE, JUMP_IF won't jump and we'll continue to the GOTO.
+				// If the condition is FALSE, JUMP_IF will jump to skip the GOTO.
+
+				// Create a label to skip the goto instruction
+				skipGotoLabel := c.generateKey("skip_goto")
+
+				// Jump to skipGotoLabel if condition is FALSE
+				c.emitInstruction(instruction.NewInstruction(instruction.OpJumpIf, skipGotoLabel, nil))
+
+				// If we reach here, condition was TRUE, so jump to case body
+				c.emitInstruction(instruction.NewInstruction(instruction.OpJump, caseLabels[i], nil))
+
+				// Label to skip the goto instruction
+				c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, skipGotoLabel, nil))
+			}
+		}
+	}
+
+	// Jump to default case if no conditions matched
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, defaultLabel, nil))
+
+	// Process each case clause body
+	for i, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok {
+			return fmt.Errorf("unexpected clause type in switch: %T", clause)
+		}
+
+		// Emit label for this case
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, caseLabels[i], nil))
+
+		// Compile each statement in the case body
+		for _, caseStmt := range caseClause.Body {
+			if err := c.compileStmt(caseStmt); err != nil {
+				return err
+			}
+		}
+
+		// Jump to end of switch after executing the case body
+		c.emitInstruction(instruction.NewInstruction(instruction.OpJump, endLabel, nil))
+	}
+
+	// Emit label for end of switch (this is also the default label if no default case exists)
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, endLabel, nil))
+
+	// Emit instruction to exit the switch scope
+	c.emitInstruction(instruction.NewInstruction(instruction.OpExitScopeWithKey, scopeKey, nil))
+
+	return nil
+}
+
+// compileLabeledStmt compiles a labeled statement
+func (c *Compiler) compileLabeledStmt(stmt *ast.LabeledStmt) error {
+	// Record the position of this label
+	labelName := stmt.Label.Name
+	c.labelPositions[labelName] = len(c.currentInstructions)
+
+	// Emit a label instruction
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, labelName, nil))
+
+	// Compile the statement that follows the label
+	return c.compileStmt(stmt.Stmt)
+}
+
+// compileBranchStmt compiles a branch statement (goto, break, continue, fallthrough)
+func (c *Compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
+	switch stmt.Tok {
+	case token.GOTO:
+		// Handle goto statement
+		if stmt.Label != nil {
+			// Emit a goto instruction with the label name
+			// The actual target position will be resolved later during linking
+			c.emitInstruction(instruction.NewInstruction(instruction.OpJump, stmt.Label.Name, nil))
+		} else {
+			return fmt.Errorf("goto statement must have a label")
+		}
+	case token.BREAK:
+		// Handle break statement
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBreak, nil, nil))
+	case token.CONTINUE:
+		// For now, we don't support continue, but we could add it later
+		return fmt.Errorf("continue statement not yet supported")
+	case token.FALLTHROUGH:
+		// For now, we don't support fallthrough, but we could add it later
+		return fmt.Errorf("fallthrough statement not yet supported")
+	default:
+		return fmt.Errorf("unsupported branch statement: %s", stmt.Tok)
+	}
 	return nil
 }

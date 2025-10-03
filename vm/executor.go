@@ -67,6 +67,7 @@ func (exec *Executor) initOpcodeHandlers() {
 	exec.opcodeHandlers[instruction.OpGetField] = exec.handleGetField
 	exec.opcodeHandlers[instruction.OpCallMethod] = exec.handleCallMethod
 	exec.opcodeHandlers[instruction.OpImport] = exec.handleImport
+	exec.opcodeHandlers[instruction.OpLabel] = exec.handleLabel
 }
 
 // RegisterOpHandler registers a custom opcode handler
@@ -1604,6 +1605,13 @@ func (exec *Executor) handleImport(stack *Stack, instr *instruction.Instruction,
 	// For now, we'll just create a placeholder variable
 	exec.vm.currentCtx.CreateVariableWithType(pkgName, importPath, "module")
 
+	return pc + 1, nil
+}
+
+// handleLabel handles the LABEL opcode
+func (exec *Executor) handleLabel(stack *Stack, instr *instruction.Instruction, pc int) (int, error) {
+	// Labels are just markers and don't perform any operation
+	// They are used for goto targets
 	return pc + 1, nil
 }
 

@@ -30,5 +30,9 @@
   "any_type.gs": 42,
   "any_type2.gs": "hello",
   "import.gs": "YES",
-  "var.gs":30
+  "var.gs":30,
+  "goto_test.gs": 42,
+  "switch_test.gs": 20,
+  "switch_complex_test.gs": 100,
+  "if_goto_test.gs": 10
 }
