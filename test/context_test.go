@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/lengzhao/goscript"
@@ -120,9 +121,20 @@ func main() {
 	script := goscript.NewScript([]byte(source))
 	script.SetDebug(true) // Enable debug mode
 
+	// Get the VM to inspect instructions
+	vm := script.GetVM()
+
+	// Execute the script to verify it works
 	result, err := script.RunContext(context.Background())
 	if err != nil {
 		t.Fatalf("Script execution failed: %v", err)
+	}
+
+	// Print all instructions for debugging
+	fmt.Println("Instructions:")
+	instructions := vm.GetInstructions()
+	for i, instr := range instructions {
+		fmt.Printf("%d: %s\n", i, instr.String())
 	}
 
 	// Check that the main scope variable was not affected by the block scope

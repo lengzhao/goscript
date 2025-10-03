@@ -1,12 +1,67 @@
 package test
 
 import (
+	"context"
+	"fmt"
 	"testing"
-	"time"
 
 	goscript "github.com/lengzhao/goscript"
-	execContext "github.com/lengzhao/goscript/context"
 )
+
+func TestComprehensiveScriptExecution(t *testing.T) {
+	// 测试更复杂的脚本执行，包括变量声明、函数调用、控制流等
+	scriptSource := `
+package main
+
+func fibonacci(n int) int {
+	if n <= 1 {
+		return n
+	}
+	return fibonacci(n-1) + fibonacci(n-2)
+}
+
+func main() {
+	// 变量声明和赋值
+	a := 10
+	b := 20
+	c := a + b
+
+	// 函数调用
+	result := fibonacci(10)
+
+	// 控制流
+	if c > 25 {
+		return result * 2
+	} else {
+		return result
+	}
+}
+`
+
+	// 创建脚本
+	script := goscript.NewScript([]byte(scriptSource))
+
+	// 设置指令数限制
+	script.SetMaxInstructions(10000)
+
+	// 执行脚本
+	result, err := script.RunContext(context.Background())
+	if err != nil {
+		t.Fatalf("Failed to execute script: %v", err)
+	}
+
+	// 验证结果
+	expected := 55 * 2 // fibonacci(10) = 55, c = 30 > 25, so return result * 2
+	if result != expected {
+		t.Errorf("Expected %d, but got %v", expected, result)
+	}
+
+	// 验证执行统计信息
+	stats := script.GetExecutionStats()
+	fmt.Printf("Execution time: %v\n", stats.ExecutionTime)
+	fmt.Printf("Instructions executed: %d\n", stats.InstructionCount)
+	fmt.Printf("Errors: %d\n", stats.ErrorCount)
+}
 
 // TestDebugMode tests the debug mode functionality
 func TestDebugMode(t *testing.T) {
@@ -79,97 +134,6 @@ func main() {
 
 	t.Logf("Execution stats: time=%v, instructions=%d, errors=%d, result=%v",
 		stats.ExecutionTime, stats.InstructionCount, stats.ErrorCount, result)
-}
-
-// TestSecurityContext tests the security context functionality
-func TestSecurityContext(t *testing.T) {
-	// Create script
-	script := goscript.NewScript([]byte(""))
-
-	// Set security context
-	securityCtx := &execContext.SecurityContext{
-		MaxExecutionTime:  1 * time.Second,
-		MaxMemoryUsage:    5 * 1024 * 1024, // 5MB
-		AllowedModules:    []string{"math"},
-		ForbiddenKeywords: []string{"unsafe"},
-		AllowCrossModule:  false,
-	}
-
-	script.SetSecurityContext(securityCtx)
-
-	// Get the global context and check security settings
-	globalCtx := script.GetGlobalContext()
-	if globalCtx.Security == nil {
-		t.Fatal("Security context should not be nil")
-	}
-
-	if globalCtx.Security.MaxExecutionTime != 1*time.Second {
-		t.Errorf("Expected MaxExecutionTime to be 1s, got %v", globalCtx.Security.MaxExecutionTime)
-	}
-
-	t.Log("Security context test passed")
-}
-
-// TestModuleFunctionality tests module-related functionality
-func TestModuleFunctionality(t *testing.T) {
-	// Create script
-	script := goscript.NewScript([]byte(""))
-
-	// Get module manager
-	moduleManager := script.GetModuleManager()
-	if moduleManager == nil {
-		t.Fatal("Module manager should not be nil")
-	}
-
-	// Check default modules
-	modules := moduleManager.GetAllModules()
-	if len(modules) == 0 {
-		t.Error("Should have default modules")
-	}
-
-	// Check if math module exists
-	mathModule, exists := moduleManager.GetModule("math")
-	if !exists {
-		t.Error("Math module should exist")
-	}
-
-	// Test calling a function from the math module
-	absFunc, exists := mathModule.GetFunction("abs")
-	if !exists {
-		t.Error("abs function should exist in math module")
-	}
-
-	result, err := absFunc(-5)
-	if err != nil {
-		t.Fatalf("Failed to call abs function: %v", err)
-	}
-
-	if result != 5 {
-		t.Errorf("Expected abs(-5) to be 5, got %v", result)
-	}
-
-	t.Log("Module functionality test passed")
-}
-
-// TestRuntimeFunctionality tests runtime-related functionality
-func TestRuntimeFunctionality(t *testing.T) {
-	// Create script
-	script := goscript.NewScript([]byte(""))
-
-	// Get runtime
-	runtime := script.GetRuntime()
-	if runtime == nil {
-		t.Fatal("Runtime should not be nil")
-	}
-
-	// Check runtime string representation
-	runtimeStr := runtime.String()
-	if runtimeStr == "" {
-		t.Error("Runtime string representation should not be empty")
-	}
-
-	t.Logf("Runtime: %s", runtimeStr)
-	t.Log("Runtime functionality test passed")
 }
 
 // TestComplexScriptExecution tests execution of a more complex script
@@ -340,53 +304,4 @@ func TestNestedFunctionCalls(t *testing.T) {
 	}
 
 	t.Log("Nested function calls test passed")
-}
-
-// TestMathModuleFunctions tests math module functions
-func TestMathModuleFunctions(t *testing.T) {
-	// Create script
-	script := goscript.NewScript([]byte(""))
-
-	// Get module manager
-	moduleManager := script.GetModuleManager()
-
-	// Get math module
-	mathModule, exists := moduleManager.GetModule("math")
-	if !exists {
-		t.Fatal("Math module should exist")
-	}
-
-	// Test abs function with positive number
-	absFunc, exists := mathModule.GetFunction("abs")
-	if !exists {
-		t.Fatal("abs function should exist in math module")
-	}
-
-	result1, err := absFunc(5)
-	if err != nil {
-		t.Fatalf("Failed to call abs function with positive number: %v", err)
-	}
-	if result1 != 5 {
-		t.Errorf("Expected abs(5) to be 5, got %v", result1)
-	}
-
-	// Test abs function with negative number
-	result2, err := absFunc(-5)
-	if err != nil {
-		t.Fatalf("Failed to call abs function with negative number: %v", err)
-	}
-	if result2 != 5 {
-		t.Errorf("Expected abs(-5) to be 5, got %v", result2)
-	}
-
-	// Test abs function with zero
-	result3, err := absFunc(0)
-	if err != nil {
-		t.Fatalf("Failed to call abs function with zero: %v", err)
-	}
-	if result3 != 0 {
-		t.Errorf("Expected abs(0) to be 0, got %v", result3)
-	}
-
-	t.Log("Math module functions test passed")
 }

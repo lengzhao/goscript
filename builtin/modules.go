@@ -4,11 +4,14 @@ package builtin
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
+
+	"github.com/lengzhao/goscript/types"
 )
 
 // Strings module functions
-var StringsModule = map[string]Function{
+var StringsModule = map[string]types.Function{
 	"Contains": func(args ...interface{}) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("contains function requires 2 arguments")
@@ -123,7 +126,7 @@ var StringsModule = map[string]Function{
 }
 
 // Fmt module functions
-var FmtModule = map[string]Function{
+var FmtModule = map[string]types.Function{
 	"Printf": func(args ...interface{}) (interface{}, error) {
 		if len(args) < 1 {
 			return nil, fmt.Errorf("printf function requires at least 1 argument")
@@ -138,6 +141,12 @@ var FmtModule = map[string]Function{
 			return format, nil
 		}
 		return fmt.Sprintf(format, args[1:]...), nil
+	},
+	"Println": func(args ...interface{}) (interface{}, error) {
+		// Print all arguments with spaces between them and a newline at the end
+		fmt.Println(args...)
+		// Return nil as Println doesn't return a value
+		return nil, nil
 	},
 	"Sprintf": func(args ...interface{}) (interface{}, error) {
 		if len(args) < 1 {
@@ -157,8 +166,75 @@ var FmtModule = map[string]Function{
 	},
 }
 
+// Math module functions
+var MathModule = map[string]types.Function{
+	"Abs": func(args ...interface{}) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("abs function requires 1 argument")
+		}
+		switch v := args[0].(type) {
+		case int:
+			if v < 0 {
+				return -v, nil
+			}
+			return v, nil
+		case float64:
+			return math.Abs(v), nil
+		default:
+			return nil, fmt.Errorf("abs function requires numeric argument, got %T", v)
+		}
+	},
+	"Max": func(args ...interface{}) (interface{}, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("max function requires 2 arguments")
+		}
+		switch a := args[0].(type) {
+		case int:
+			if b, ok := args[1].(int); ok {
+				if a > b {
+					return a, nil
+				}
+				return b, nil
+			}
+		case float64:
+			if b, ok := args[1].(float64); ok {
+				return math.Max(a, b), nil
+			}
+		}
+		return nil, fmt.Errorf("max function requires numeric arguments of the same type")
+	},
+	"Min": func(args ...interface{}) (interface{}, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("min function requires 2 arguments")
+		}
+		switch a := args[0].(type) {
+		case int:
+			if b, ok := args[1].(int); ok {
+				if a < b {
+					return a, nil
+				}
+				return b, nil
+			}
+		case float64:
+			if b, ok := args[1].(float64); ok {
+				return math.Min(a, b), nil
+			}
+		}
+		return nil, fmt.Errorf("min function requires numeric arguments of the same type")
+	},
+	"Sqrt": func(args ...interface{}) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("sqrt function requires 1 argument")
+		}
+		if v, ok := args[0].(float64); ok {
+			return math.Sqrt(v), nil
+		}
+		return nil, fmt.Errorf("sqrt function requires float64 argument")
+	},
+}
+
 // JSON module functions
-var JSONModule = map[string]Function{
+var JSONModule = map[string]types.Function{
 	"Marshal": func(args ...interface{}) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, fmt.Errorf("marshal function requires 1 argument")
@@ -189,12 +265,14 @@ var JSONModule = map[string]Function{
 }
 
 // GetModuleFunctions returns the functions for a given module
-func GetModuleFunctions(moduleName string) (map[string]Function, bool) {
+func GetModuleFunctions(moduleName string) (map[string]types.Function, bool) {
 	switch moduleName {
 	case "strings":
 		return StringsModule, true
 	case "fmt":
 		return FmtModule, true
+	case "math":
+		return MathModule, true
 	case "json":
 		return JSONModule, true
 	default:
@@ -202,6 +280,27 @@ func GetModuleFunctions(moduleName string) (map[string]Function, bool) {
 	}
 }
 
+// GetModuleExecutor returns a ModuleExecutor for a given module
+func GetModuleExecutor(moduleName string) (types.ModuleExecutor, bool) {
+	// Get the module functions
+	moduleFuncs, exists := GetModuleFunctions(moduleName)
+	if !exists {
+		return nil, false
+	}
+
+	// Create a ModuleExecutor that delegates to the module functions
+	moduleExecutor := func(entrypoint string, args ...interface{}) (interface{}, error) {
+		// Look up the function in the module
+		if fn, exists := moduleFuncs[entrypoint]; exists {
+			// Call the function with the provided arguments
+			return fn(args...)
+		}
+		return nil, fmt.Errorf("function %s not found in module %s", entrypoint, moduleName)
+	}
+
+	return moduleExecutor, true
+}
+
 func ListAllModules() []string {
-	return []string{"strings", "fmt", "json"}
+	return []string{"strings", "fmt", "math", "json"}
 }

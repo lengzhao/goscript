@@ -96,6 +96,23 @@ const (
 
 	// Break from loop
 	OpBreak
+
+	// Start of switch statement
+	OpSwitchStart
+
+	// Case clause in switch statement
+	OpCase
+
+	// Default clause in switch statement
+	OpDefault
+
+	// End of switch statement
+	OpSwitchEnd
+
+	// Define a label
+	OpLabel
+
+	OpCodeLast
 )
 
 // String returns the string representation of an OpCode
@@ -141,6 +158,8 @@ func (op OpCode) String() string {
 		return "OpSetIndex"
 	case OpRotate:
 		return "OpRotate"
+	case OpSwap:
+		return "OpSwap"
 	case OpNewSlice:
 		return "OpNewSlice"
 	case OpLen:
@@ -157,6 +176,16 @@ func (op OpCode) String() string {
 		return "OpCreateVar"
 	case OpBreak:
 		return "OpBreak"
+	case OpSwitchStart:
+		return "OpSwitchStart"
+	case OpCase:
+		return "OpCase"
+	case OpDefault:
+		return "OpDefault"
+	case OpSwitchEnd:
+		return "OpSwitchEnd"
+	case OpLabel:
+		return "OpLabel"
 	default:
 		return fmt.Sprintf("OpCode(%d)", op)
 	}
@@ -234,7 +263,7 @@ func (i *Instruction) String() string {
 	case OpJump:
 		return fmt.Sprintf("JUMP %v", i.Arg)
 	case OpJumpIf:
-		return fmt.Sprintf("JUMP_IF %v", i.Arg)
+		return fmt.Sprintf("JUMP_IF %v %v", i.Arg, i.Arg2)
 	case OpBinaryOp:
 		return fmt.Sprintf("BINARY_OP %v", i.Arg)
 	case OpUnaryOp:
@@ -253,6 +282,8 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("SET_INDEX %v", i.Arg)
 	case OpRotate:
 		return fmt.Sprintf("ROTATE %v", i.Arg)
+	case OpSwap:
+		return "SWAP"
 	case OpNewSlice:
 		return fmt.Sprintf("NEW_SLICE %v", i.Arg)
 	case OpLen:
@@ -269,6 +300,16 @@ func (i *Instruction) String() string {
 		return fmt.Sprintf("CREATE_VAR %v", i.Arg)
 	case OpBreak:
 		return "BREAK"
+	case OpSwitchStart:
+		return "SWITCH_START"
+	case OpCase:
+		return fmt.Sprintf("CASE %v", i.Arg)
+	case OpDefault:
+		return "DEFAULT"
+	case OpSwitchEnd:
+		return "SWITCH_END"
+	case OpLabel:
+		return fmt.Sprintf("LABEL %v", i.Arg)
 	default:
 		return fmt.Sprintf("UNKNOWN(%d) %v %v", i.Op, i.Arg, i.Arg2)
 	}

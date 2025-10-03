@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	goscript "github.com/lengzhao/goscript"
+	"github.com/lengzhao/goscript/builtin"
 )
 
 func TestImportInstruction(t *testing.T) {
@@ -25,7 +26,7 @@ func main() {
 
 	// Create script
 	script := goscript.NewScript(source)
-	script.SetDebug(false) // Disable debug mode for cleaner output
+	script.SetDebug(true) // Disable debug mode for cleaner output
 
 	// Run the script
 	result, err := script.Run()
@@ -58,6 +59,15 @@ func main() {
 	// Create script
 	script := goscript.NewScript(source)
 	script.SetDebug(false) // Disable debug mode for cleaner output
+
+	// Register builtin modules
+	modules := []string{"strings", "fmt"}
+	for _, moduleName := range modules {
+		moduleExecutor, exists := builtin.GetModuleExecutor(moduleName)
+		if exists {
+			script.RegisterModule(moduleName, moduleExecutor)
+		}
+	}
 
 	// Run the script
 	result, err := script.Run()

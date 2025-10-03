@@ -1,27 +1,29 @@
-# GoScript 综合技术文档
+# GoScript Comprehensive Technical Documentation
 
-## 1. 项目概述
+## 1. Project Overview
 
-GoScript是一个兼容Go标准语法的脚本引擎，它允许你在Go应用程序中动态执行Go代码。该项目旨在实现一个安全、高效且易于扩展的脚本执行环境。
+GoScript is a script engine compatible with Go standard syntax that allows you to dynamically execute Go code within Go applications. This project aims to implement a safe, efficient, and extensible script execution environment.
 
-### 1.1 设计目标
+### 1.1 Design Goals
 
-1. **语法兼容性**：尽可能兼容Go标准语法
-2. **安全性**：提供沙箱环境，限制危险操作
-3. **可扩展性**：支持自定义函数、类型和模块
-4. **性能**：通过编译执行提高运行效率
-5. **易用性**：提供简洁的API供Go程序调用
+1. **Syntax Compatibility**: As compatible as possible with Go standard syntax
+2. **Security**: Provide a sandbox environment to limit dangerous operations
+3. **Extensibility**: Support custom functions, types, and modules
+4. **Performance**: Improve execution efficiency through compilation
+5. **Usability**: Provide a simple API for Go applications to call
 
-### 1.2 核心特性
+### 1.2 Core Features
 
-- **模块化设计**：词法分析、语法分析、AST生成等组件分离
-- **可扩展性**：支持自定义函数和模块
-- **安全性**：提供执行时间和内存使用限制
-- **复用Go原生模块**：词法分析、语法分析等直接复用Go标准库
+- **Modular Design**: Separation of lexical analysis, syntax analysis, AST generation, and other components
+- **Extensibility**: Support for custom functions and modules
+- **Security**: Provides execution time and memory usage limits
+- **Reuse of Go Native Modules**: Lexical analysis, syntax analysis, etc. directly reuse Go standard library
+- **Key-based Context Management**: Manage scope and variables through unique identifiers
+- **Complete Go Syntax Support**: Support for structs, methods, range statements, composite literals, etc.
 
-## 2. 架构设计
+## 2. Architecture Design
 
-### 2.1 整体架构
+### 2.1 Overall Architecture
 
 ```
 +-------------------+
@@ -30,59 +32,61 @@ GoScript是一个兼容Go标准语法的脚本引擎，它允许你在Go应用�
           |
           v
 +-------------------+
-|  Script Interface | <- API层，提供给Go应用调用
+|  Script Interface | <- API layer, provided for Go application calls
 +-------------------+
           |
           v
 +-------------------+
-|   Parser/Lexer    | <- 词法语法分析器（复用Go标准库）
+|   Parser/Lexer    | <- Lexical and syntax analyzer (reusing Go standard library)
 +-------------------+
           |
           v
 +-------------------+
-|   AST Generator   | <- 抽象语法树生成器（复用Go标准库）
+|   AST Generator   | <- Abstract syntax tree generator (reusing Go standard library)
 +-------------------+
           |
           v
 +-------------------+
-|   Compiler        | <- 编译器，将AST编译为字节码
+|   Compiler        | <- Compiler, compiles AST to bytecode
 +-------------------+
           |
           v
 +-------------------+
-|   Bytecode VM     | <- 字节码虚拟机，执行编译后的代码
+|   Bytecode VM     | <- Bytecode virtual machine, executes compiled code
 +-------------------+
           |
           v
 +-------------------+
-|  Runtime System   | <- 运行时系统，管理对象、内存等
+|  Runtime System   | <- Runtime system, manages objects, memory, etc.
 +-------------------+
 ```
 
-### 2.2 核心组件
+### 2.2 Core Components
 
-1. **词法分析器 (parser)**：使用Go标准库的`go/scanner`进行词法分析
-2. **语法分析器 (parser)**：使用Go标准库的`go/parser`进行语法分析
-3. **抽象语法树 (ast)**：使用Go标准库的`go/ast`处理AST节点
-4. **编译器 (compiler)**：将AST编译为可执行的中间表示（字节码）
-5. **运行时 (runtime)**：管理变量、函数、类型和模块
-6. **虚拟机 (vm)**：执行编译后的字节码
-7. **类型系统 (types)**：统一的类型系统，所有类型都实现IType接口
-8. **符号表 (symbol)**：管理变量、函数、类型等符号信息
-9. **模块管理 (module)**：管理不同模块及其指令集
-10. **执行上下文 (context)**：管理脚本执行时的变量作用域和栈
+GoScript's core components include:
 
-### 2.3 核心设计理念
+1. **Script (script.go)**: Main API interface, providing methods like NewScript, Run, AddFunction, etc.
+2. **Parser (parser/)**: Lexical and syntax analyzer, reusing Go standard library's `go/scanner` and `go/parser`
+3. **Compiler (compiler/)**: Compiler that compiles AST into executable intermediate representation (bytecode)
+4. **VM (vm/)**: Virtual machine that executes compiled bytecode
+5. **Context (context/)**: Execution context management, managing variable scope and stack during script execution
+6. **Instruction (instruction/)**: Instruction definitions, defining opcodes executable by the virtual machine
+7. **Types (types/)**: Type system, defining type interfaces and module executors in GoScript
+8. **Builtin (builtin/)**: Built-in functions and modules, providing standard library functionality such as math, strings, etc.
 
-1. **利用Go标准库**：充分利用Go标准库的功能，特别是`context`包来管理执行上下文和变量作用域
-2. **简化操作码设计**：通过简化操作码设计，减少虚拟机的复杂性，提高执行效率
-3. **模块化架构**：采用模块化设计，各个组件职责清晰，便于维护和扩展
+These components work together to provide a complete script execution environment.
 
-## 3. 类型系统
+### 2.3 Core Design Concepts
 
-### 3.1 IType接口
+1. **Leveraging Go Standard Library**: Fully utilize Go standard library functions, especially the `context` package to manage execution context and variable scope
+2. **Simplified Opcode Design**: Reduce virtual machine complexity and improve execution efficiency through simplified opcode design
+3. **Modular Architecture**: Adopt modular design with clear component responsibilities for easy maintenance and extension
 
-所有类型都支持IType接口，提供统一的类型操作接口：
+## 3. Type System
+
+### 3.1 IType Interface
+
+All types support the IType interface, providing a unified type operation interface:
 
 ```go
 type IType interface {
@@ -97,262 +101,278 @@ type IType interface {
 }
 ```
 
-### 3.2 基本类型实现
+### 3.2 Basic Type Implementation
 
-- IntType: 整数类型
-- FloatType: 浮点数类型
-- StringType: 字符串类型
-- BoolType: 布尔类型
+- IntType: Integer type
+- FloatType: Floating-point type
+- StringType: String type
+- BoolType: Boolean type
 
-## 4. 执行上下文与作用域管理
+## 4. Execution Context and Scope Management
 
-### 4.1 ExecutionContext结构
+### 4.1 Context Structure
+
+The current implementation uses a hierarchical context system based on the `context.Context` package:
 
 ```go
-type ExecutionContext struct {
-    // Go context for cancellation, timeout, and value storage
-    Context context.Context
+type Context struct {
+    // Path key for identifying the context (e.g., "main.function.loop")
+    pathKey string
 
-    // Cancel function to cancel the context
-    Cancel context.CancelFunc
+    // Parent context reference
+    parent *Context
 
-    // Scope manager for variable scope management
-    ScopeManager *ScopeManager
+    // Variables in this context
+    variables map[string]interface{}
 
-    // Module name
-    ModuleName string
+    // Variable types in this context
+    types map[string]string
 
-    // Parent execution context
-    Parent *ExecutionContext
-
-    // Security context
-    Security *SecurityContext
+    // Child contexts
+    children map[string]*Context
 }
 ```
 
-### 4.2 作用域嵌套
+### 4.2 Scope Nesting
 
 ```
-全局作用域
-└── 模块作用域
-    └── 函数作用域
-        └── 块作用域
+Global scope
+└── Module scope
+    └── Function scope
+        └── Block scope
 ```
 
-### 4.3 变量查找与隔离
+### 4.3 Variable Lookup and Isolation
 
-利用Go的`context`包实现自然的变量查找链，从当前作用域向上查找直到全局作用域。不同作用域之间的变量自然隔离，防止变量污染。
+The Context structure implements a natural variable lookup chain, searching from the current scope upward to the global scope. Variables in different scopes are naturally isolated to prevent variable pollution.
 
-### 4.4 基于Key的上下文管理（新设计）
+### 4.4 Key-based Context Management (New Design)
 
-为了更好地管理作用域，引入了基于Key的上下文管理机制：
+To better manage scopes, a key-based context management mechanism has been introduced:
 
-1. **唯一标识符**：每个作用域都有唯一的key标识符
-   - 全局作用域：`main`
-   - 主函数：`main.main`
-   - 普通函数：`main.FunctionName`
-   - 结构体方法：`main.StructName.MethodName`
-   - 其他模块：`moduleName.FunctionName`
+1. **Unique Identifier**: Each scope has a unique key identifier
+   - Global scope: `main`
+   - Main function: `main.main`
+   - Regular functions: `main.FunctionName`
+   - Struct methods: `main.StructName.MethodName`
+   - Other modules: `moduleName.FunctionName`
+   - Code blocks: `main.main.block_1`
 
-2. **编译时跟踪**：编译器在编译BlockStmt时分析当前上下文的key，并生成相应的作用域管理指令
+2. **Compile-time Tracking**: The compiler analyzes the current context's key when compiling BlockStmt and generates corresponding scope management instructions
 
-3. **运行时管理**：运行时创建runCtx对象来管理变量和引用关系，每个runCtx引用其父级上下文
+3. **Runtime Management**: Runtime creates Context objects to manage variables and reference relationships, with each Context referencing its parent context
 
-## 5. 虚拟机与操作码
+4. **Variable Lookup**: Variable lookup follows the scope chain, searching from the current context upward to the global context
 
-### 5.1 简化后的操作码
+5. **Scope Isolation**: Variables in different scopes are naturally isolated to prevent variable pollution
+
+## 5. Virtual Machine and Opcodes
+
+### 5.1 Simplified Opcodes
 
 ```go
 const (
-    OpNop        OpCode = iota // 空操作
-    OpLoadConst               // 加载常量
-    OpLoadName                // 加载变量
-    OpStoreName               // 存储变量
-    OpCall                    // 调用函数
-    OpReturn                  // 返回
-    OpJump                    // 跳转
-    OpJumpIf                  // 条件跳转
-    OpBinaryOp                // 二元操作
-    OpUnaryOp                 // 一元操作
-    OpEnterScope              // 进入作用域
-    OpExitScope               // 退出作用域
-    OpEnterScopeWithKey       // 进入指定key的作用域
-    OpExitScopeWithKey        // 退出指定key的作用域
+    OpNop        OpCode = iota // No operation
+    OpLoadConst               // Load constant
+    OpLoadName                // Load variable
+    OpStoreName               // Store variable
+    OpCall                    // Call function
+    OpReturn                  // Return
+    OpJump                    // Jump
+    OpJumpIf                  // Conditional jump
+    OpBinaryOp                // Binary operation
+    OpUnaryOp                 // Unary operation
+    OpEnterScope              // Enter scope
+    OpExitScope               // Exit scope
+    OpEnterScopeWithKey       // Enter scope with specified key
+    OpExitScopeWithKey        // Exit scope with specified key
+    OpCreateVar               // Create variable
+    OpNewSlice                // Create slice
+    OpNewStruct               // Create struct
+    OpGetField                // Get struct field
+    OpSetField                // Set struct field
+    OpGetIndex                // Get indexed element
+    OpSetIndex                // Set indexed element
+    OpLen                     // Get length
+    OpImport                  // Import module
 )
 ```
 
-### 5.2 指令格式
+### 5.2 Instruction Format
 
 ```go
 type Instruction struct {
-    Op   OpCode      // 操作码
-    Arg  interface{} // 参数1
-    Arg2 interface{} // 参数2
+    Op   OpCode      // Opcode
+    Arg  interface{} // Argument 1
+    Arg2 interface{} // Argument 2
 }
 ```
 
-## 6. 函数注册表机制
+## 6. Function Registry Mechanism
 
-### 6.1 统一函数调用
+### 6.1 Unified Function Calls
 
-所有函数（内置函数、用户定义函数、模块函数）都通过相同的机制注册和调用。
+All functions (built-in functions, user-defined functions, module functions) are registered and called through the same mechanism.
 
-### 6.2 函数注册流程
+### 6.2 Function Registration Process
 
-1. 创建函数实例
-2. 通过ExecutionContext.RegisterFunction注册函数
-3. 函数存储在ScopeManager的函数注册表中
+1. Create function instance
+2. Register function through VM.RegisterFunction
+3. Function is stored in VM's function registry
 
-### 6.3 函数调用流程
+### 6.3 Function Call Process
 
-1. 检查是否为模块函数调用 (moduleName.functionName)
-2. 在全局上下文中查找函数
-3. 在当前模块中查找函数
+1. Check if it's a module function call (moduleName.functionName)
+2. Look up function in VM's function registry
+3. Execute function directly or through module executor
 
-## 7. 模块系统
+## 7. Module System
 
-### 7.1 Module结构
+### 7.1 Module Structure
+
+Modules are managed through the VM's module registry system:
 
 ```go
-type Module struct {
-    Name         string                    // 模块名称
-    Instructions []*vm.Instruction         // 指令集
-    SymbolTable  *symbol.SymbolTable       // 符号表
-    Context      *context.ExecutionContext  // 执行上下文
-    Functions    map[string]Function       // 函数映射
-}
+// Module functions are registered through the ModuleExecutor interface
+type ModuleExecutor func(entrypoint string, args ...interface{}) (interface{}, error)
 ```
 
-### 7.2 模块管理
+### 7.2 Module Management
 
-支持模块定义和注册、函数注册、模块间调用、内置模块支持和模块访问控制。
+Supports module definition and registration, function registration, inter-module calls, built-in module support, and module access control.
 
-## 8. 语法支持
+## 8. Syntax Support
 
-### 8.1 支持的Go语法特性
+### 8.1 Supported Go Syntax Features
 
-1. **基本类型**：
-   - 布尔类型 (bool)
-   - 数值类型 (int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64)
-   - 字符串类型 (string)
-   - 复合类型 ([]T, [n]T, map[K]T, struct, interface)
+1. **Basic Types**:
+   - Boolean type (bool)
+   - Numeric types (int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64)
+   - String type (string)
+   - Composite types ([]T, [n]T, map[K]T, struct, interface)
 
-2. **变量声明**：
-   - var 声明
-   - 短变量声明 (:=)
-   - 常量声明 (const)
+2. **Variable Declaration**:
+   - var declaration
+   - Short variable declaration (:=)
+   - Constant declaration (const)
 
-3. **控制结构**：
-   - 条件语句 (if/else)
-   - 循环语句 (for)
-   - switch语句
-   - goto语句
+3. **Control Structures**:
+   - Conditional statements (if/else)
+   - Loop statements (for)
+   - Range statements (for range)
+   - Switch statements
+   - Goto statements
 
-4. **函数**：
-   - 函数声明
-   - 函数调用
-   - 多返回值
-   - 可变参数
-   - 匿名函数
-   - 闭包
+4. **Functions**:
+   - Function declaration
+   - Function calls
+   - Method declaration and calls
+   - Multiple return values
+   - Variadic parameters
+   - Anonymous functions
+   - Closures
 
-5. **数据结构**：
-   - 数组和切片
-   - 映射
-   - 结构体
-   - 指针
+5. **Data Structures**:
+   - Arrays and slices
+   - Maps
+   - Structs
+   - Pointers
+   - Composite literals ([]int{1, 2, 3} or Person{name: "Alice"})
 
-6. **错误处理**：
-   - error类型
-   - panic/recover机制
+6. **Operators**:
+   - Arithmetic operators (+, -, *, /, %)
+   - Comparison operators (==, !=, <, <=, >, >=)
+   - Logical operators (&&, ||, !)
+   - Assignment operators (=, +=, -=, *=, /=, %=)
+   - Increment/decrement operators (++, --)
 
-### 8.2 限制的语法特性
+7. **Error Handling**:
+   - error type
+   - panic/recover mechanism
 
-为了安全性和简化实现，以下Go特性将被限制或不支持：
+### 8.2 Limited Syntax Features
 
-1. **包管理**：不支持完整的Go包系统，通过模块系统提供功能
-2. **并发**：限制或不支持goroutine和channel，可通过模块提供受限的并发功能
-3. **低级操作**：不支持unsafe包，限制指针操作
-4. **反射**：限制或不支持reflect包
-5. **系统调用**：通过模块提供受限的系统功能
+For security and implementation simplification, the following Go features are restricted or not supported:
 
-## 9. 安全机制
+1. **Package Management**: No support for complete Go package system, functionality provided through module system
+2. **Concurrency**: Restriction or no support for goroutines and channels, limited concurrency functionality provided through modules
+3. **Low-level Operations**: No support for unsafe package, restriction of pointer operations
+4. **Reflection**: Restriction or no support for reflect package
+5. **System Calls**: Limited system functionality provided through modules
 
-### 9.1 沙箱环境
+## 9. Security Mechanisms
 
-1. **资源限制**：
-   - 最大执行时间限制
-   - 最大内存使用限制
-   - 最大对象分配限制
+### 9.1 Sandbox Environment
 
-2. **API限制**：
-   - 禁止危险系统调用
-   - 限制文件系统访问
-   - 限制网络访问
+1. **Resource Limitations**:
+   - Maximum execution time limit
+   - Maximum memory usage limit
+   - Maximum object allocation limit
 
-3. **语法限制**：
-   - 禁止某些关键字
-   - 限制复杂度
+2. **API Limitations**:
+   - Prohibition of dangerous system calls
+   - Restriction of file system access
+   - Restriction of network access
 
-### 9.2 安全上下文
+3. **Syntax Limitations**:
+   - Prohibition of certain keywords
+   - Complexity restrictions
+
+### 9.2 Security Context
 
 ```go
-type SecurityContext struct {
-    // 最大执行时间（纳秒）
-    MaxExecutionTime time.Duration
-    
-    // 最大内存使用（字节）
-    MaxMemoryUsage int64
-    
-    // 允许的模块列表
-    AllowedModules []string
-    
-    // 禁止的关键字
-    ForbiddenKeywords []string
+// Security is managed through VM instruction limits
+// Script level security configuration
+type Script struct {
+    // Maximum number of instructions allowed (0 means no limit)
+    maxInstructions int64
 }
 
-// 设置安全上下文
-func (s *Script) SetSecurityContext(ctx *SecurityContext)
+// Set security context
+func (s *Script) SetMaxInstructions(max int64)
 ```
 
-## 10. API设计
+## 10. API Design
 
-### 10.1 Script接口
+### 10.1 Script Interface
 
 ```go
 type Script struct {
-    // 脚本内容
+    // Script content
     source []byte
     
-    // 变量映射
-    variables map[string]interface{}
-    
-    // 模块映射
-    modules map[string]Module
+    // Virtual machine
+    vm *vm.VM
+
+    // Debug mode
+    debug bool
+
+    // Execution statistics
+    executionStats *ExecutionStats
+
+    // Maximum number of instructions allowed (0 means no limit)
+    maxInstructions int64
 }
 
-// 创建新脚本
+// Create new script
 func NewScript(source []byte) *Script
 
-// 添加变量
-func (s *Script) AddVariable(name string, value interface{}) error
+// Add function
+func (s *Script) AddFunction(name string, fn vm.ScriptFunction) error
 
-// 添加模块
-func (s *Script) AddModule(name string, module Module) error
+// Register module
+func (s *Script) RegisterModule(moduleName string, executor types.ModuleExecutor)
 
-// 编译脚本
-func (s *Script) Compile() (*CompiledScript, error)
-
-// 执行脚本
+// Compile and execute script
 func (s *Script) Run() (interface{}, error)
 
-// 执行脚本（带上下文）
+// Execute script (with context)
 func (s *Script) RunContext(ctx context.Context) (interface{}, error)
 ```
 
-## 11. 使用示例
+## 11. Usage Examples
 
-### 11.1 基本使用
+### 11.1 Basic Usage
 
 ```go
 package main
@@ -365,7 +385,7 @@ import (
 )
 
 func main() {
-    // 创建脚本
+    // Create script
     source := `
 package main
 
@@ -377,44 +397,38 @@ func main() {
 `
     
     script := goscript.NewScript([]byte(source))
+    script.SetDebug(true) // Enable debug mode
     
-    // 设置安全上下文
-    securityCtx := &goscript.SecurityContext{
-        MaxExecutionTime: 5 * time.Second,
-        MaxMemoryUsage:   10 * 1024 * 1024, // 10MB
-    }
-    script.SetSecurityContext(securityCtx)
-    
-    // 执行脚本
-    result, err := script.RunContext(context.Background())
+    // Execute script
+    result, err := script.Run()
     if err != nil {
-        fmt.Printf("执行错误: %v\n", err)
+        fmt.Printf("Execution error: %v\n", err)
         return
     }
     
-    fmt.Printf("执行结果: %v\n", result) // 输出: 30
+    fmt.Printf("Execution result: %v\n", result) // Output: 30
 }
 ```
 
-### 11.2 自定义扩展
+### 11.2 Custom Extensions
 
 ```go
-// 自定义函数
+// Custom function
 func customFunction(args ...interface{}) (interface{}, error) {
     if len(args) != 2 {
-        return nil, fmt.Errorf("需要2个参数")
+        return nil, fmt.Errorf("requires 2 arguments")
     }
     
     a, ok1 := args[0].(int)
     b, ok2 := args[1].(int)
     if !ok1 || !ok2 {
-        return nil, fmt.Errorf("参数必须是整数")
+        return nil, fmt.Errorf("arguments must be integers")
     }
     
     return a * b, nil
 }
 
-// 使用自定义函数
+// Using custom function
 func main() {
     source := `
 package main
@@ -426,57 +440,69 @@ func main() {
 `
     
     script := goscript.NewScript([]byte(source))
-    script.AddFunction("customMultiply", runtime.NewBuiltInFunction("customMultiply", customFunction))
+    
+    // Register custom function with the VM
+    script.AddFunction("customMultiply", func(args ...interface{}) (interface{}, error) {
+        if len(args) != 2 {
+            return nil, fmt.Errorf("customMultiply function requires 2 arguments")
+        }
+        a, ok1 := args[0].(int)
+        b, ok2 := args[1].(int)
+        if !ok1 || !ok2 {
+            return nil, fmt.Errorf("customMultiply function requires integer arguments")
+        }
+        return a * b, nil
+    })
     
     result, err := script.Run()
     if err != nil {
-        fmt.Printf("执行错误: %v\n", err)
+        fmt.Printf("Execution error: %v\n", err)
         return
     }
     
-    fmt.Printf("执行结果: %v\n", result) // 输出: 30
+    fmt.Printf("Execution result: %v\n", result) // Output: 30
 }
 ```
 
-## 12. 执行流程
+## 12. Execution Flow
 
-1. **词法分析**：源代码 → Tokens（复用Go标准库）
-2. **语法分析**：Tokens → AST（复用Go标准库）
-3. **编译**：AST → 字节码指令和常量池
-4. **执行**：
-   - 创建执行上下文
-   - 加载模块和函数
-   - 执行字节码指令
-   - 管理作用域和变量
+1. **Lexical Analysis**: Source code → Tokens (reusing Go standard library)
+2. **Syntax Analysis**: Tokens → AST (reusing Go standard library)
+3. **Compilation**: AST → Bytecode instructions and constant pool
+4. **Execution**:
+   - Create VM context
+   - Load modules and functions
+   - Execute bytecode instructions
+   - Manage scope and variables
 
-## 13. 性能优化
+## 13. Performance Optimization
 
-1. **操作码优化**：通过简化操作码设计，减少虚拟机的复杂性，提高执行效率
-2. **作用域管理优化**：利用Go的`context`包优化作用域管理，减少内存分配和查找时间
-3. **标准库复用**：复用Go标准库的词法分析、语法分析和AST处理功能，确保兼容性和性能
+1. **Opcode Optimization**: Reduce virtual machine complexity and improve execution efficiency through simplified opcode design
+2. **Scope Management Optimization**: Optimize scope management using hierarchical Context objects to reduce memory allocation and lookup time
+3. **Standard Library Reuse**: Reuse Go standard library's lexical analysis, syntax analysis, and AST processing functions to ensure compatibility and performance
 
-## 14. 扩展机制
+## 14. Extension Mechanisms
 
-### 14.1 自定义函数
+### 14.1 Custom Functions
 
-支持通过Go代码注册自定义函数：
+Support for registering custom functions through Go code:
 
 ```go
-// 注册自定义函数
+// Register custom function
 script.AddFunction("myFunc", func(args ...interface{}) (interface{}, error) {
-    // 函数实现
+    // Function implementation
     return result, nil
 })
 ```
 
-### 14.2 自定义类型
+### 14.2 Custom Types
 
-支持实现自定义类型：
+Support for implementing custom types through the IType interface:
 
 ```go
-// 实现自定义类型
+// Implement custom type by implementing the IType interface
 type MyType struct {
-    // 字段定义
+    // Field definitions
 }
 
 func (m *MyType) TypeName() string {
@@ -484,36 +510,36 @@ func (m *MyType) TypeName() string {
 }
 
 func (m *MyType) String() string {
-    // 字符串表示
+    // String representation
 }
 
-// 注册自定义类型
-script.AddType("MyType", &MyType{})
+// Register custom type through custom functions or modules
 ```
 
-### 14.3 模块系统
+### 14.3 Module System
 
-支持模块化扩展：
+Support for modular extensions:
 
 ```go
-// 创建模块
-module := NewModule("myModule")
-module.AddFunction("func1", func1)
-module.AddType("Type1", &Type1{})
+// Create and register module with ModuleExecutor
+moduleExecutor := func(entrypoint string, args ...interface{}) (interface{}, error) {
+    // Module implementation
+    return result, nil
+}
 
-// 注册模块
-script.AddModule("myModule", module)
+// Register module
+script.RegisterModule("myModule", moduleExecutor)
 ```
 
-## 15. 测试
+## 15. Testing
 
-运行所有测试：
+Run all tests:
 
 ```
 go test ./...
 ```
 
-运行特定包的测试：
+Run tests for specific packages:
 
 ```
 go test ./lexer -v
@@ -524,14 +550,14 @@ go test ./runtime -v
 go test ./vm -v
 ```
 
-## 16. 总结
+## 16. Summary
 
-GoScript通过以下方式实现了简洁、高效和安全的脚本引擎：
+GoScript implements a concise, efficient, and secure script engine through the following approaches:
 
-1. **利用Go标准库**：复用成熟的Go标准库功能
-2. **简化设计**：通过简化操作码和组件设计降低复杂性
-3. **自然的作用域管理**：利用Go的`context`包实现自然的作用域管理
-4. **模块化架构**：清晰的组件职责划分便于维护和扩展
-5. **内置安全机制**：提供多层次的安全控制
+1. **Leveraging Go Standard Library**: Reusing mature Go standard library functions
+2. **Simplified Design**: Reducing complexity through simplified opcode and component design
+3. **Natural Scope Management**: Implementing natural scope management using hierarchical Context objects
+4. **Modular Architecture**: Clear component responsibility division for easy maintenance and extension
+5. **Built-in Security Mechanisms**: Providing instruction count limits for security controls
 
-这种设计使得GoScript成为一个易于使用、高性能且安全的脚本引擎，适用于各种Go应用程序的动态执行需求。
+This design makes GoScript an easy-to-use, high-performance, and secure script engine suitable for various Go application dynamic execution needs.

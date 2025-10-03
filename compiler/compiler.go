@@ -1,5 +1,5 @@
 // Package compiler implements the GoScript compiler
-// It compiles AST nodes to bytecode instructions
+// It compiles AST nodes to bytecode instructions with key-based instruction management
 package compiler
 
 import (
@@ -11,603 +11,350 @@ import (
 
 	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/instruction"
-	"github.com/lengzhao/goscript/types"
 	"github.com/lengzhao/goscript/vm"
 )
 
-// FunctionInfo holds information about a compiled function
-type FunctionInfo struct {
-	Name         string
-	StartIP      int
-	EndIP        int
-	ParamCount   int
-	ParamNames   []string // Store parameter names for use in function body
-	ReceiverType string   // Store receiver type ("value" or "pointer")
-	// Reference to the ScriptFunction that will be registered at runtime
-	ScriptFunction *vm.ScriptFunction
-}
-
-// Compiler compiles AST nodes to bytecode
+// Compiler compiles AST nodes to bytecode with key-based instruction management
 type Compiler struct {
 	// Virtual machine to generate instructions for
 	vm *vm.VM
 
-	// Execution context for variable and function lookups
-	context *context.ExecutionContext
+	// Compile context for organizing instructions during compilation
+	compileContext *context.CompileContext
 
-	// Instruction pointer for jumps
-	ip int
+	// Current scope key for generating unique keys
+	currentScopeKey string
 
-	// Function definitions to compile after main
-	functions []*ast.FuncDecl
+	// Package name from the AST
+	packageName string
 
-	// Compiled functions map
-	functionMap map[string]*FunctionInfo
+	// Counter for generating unique keys
+	keyCounter int
 
-	// Variable type mapping to track variable types during compilation
-	variableTypes map[string]string
+	// Instructions for the current scope
+	currentInstructions []*instruction.Instruction
 
-	// Expression type mapping to track expression types during compilation
-	// This is used for method chaining to determine the type of the receiver
-	expressionTypes map[ast.Expr]string
+	// Imported modules map (package name -> import path)
+	importedModules map[string]string
 
-	// Import declarations to handle
-	imports []string
-
-	// Global variables that need to be pre-declared
-	globalVars map[string]bool
+	// Label positions map (label name -> instruction index)
+	labelPositions map[string]int
 }
 
-// NewCompiler creates a new compiler
-func NewCompiler(vm *vm.VM, context *context.ExecutionContext) *Compiler {
+// NewCompiler creates a new compiler with key-based instruction management
+func NewCompiler(vmInstance *vm.VM) *Compiler {
+	// Create a temporary compile context, will be updated when we know the package name
+	compileCtx := context.NewCompileContext("main", nil)
 	return &Compiler{
-		vm:              vm,
-		context:         context,
-		ip:              0,
-		functions:       make([]*ast.FuncDecl, 0),
-		functionMap:     make(map[string]*FunctionInfo),
-		variableTypes:   make(map[string]string),
-		expressionTypes: make(map[ast.Expr]string),
-		imports:         make([]string, 0),
-		globalVars:      make(map[string]bool),
+		vm:                  vmInstance,
+		compileContext:      compileCtx,
+		currentScopeKey:     "main",
+		packageName:         "main",
+		keyCounter:          0,
+		currentInstructions: make([]*instruction.Instruction, 0),
+		importedModules:     make(map[string]string),
+		labelPositions:      make(map[string]int),
 	}
 }
 
-// Compile compiles an AST file to bytecode
+// Compile compiles an AST file to bytecode with key-based instruction management
 func (c *Compiler) Compile(file *ast.File) error {
-	// Collect all function declarations, type declarations, and import declarations
-	var typeDecls []*ast.GenDecl
-	var importDecls []*ast.GenDecl
-	var varDecls []*ast.GenDecl
-	var mainFunc *ast.FuncDecl
-	var otherFuncs []*ast.FuncDecl
-	var methodFuncs []*ast.FuncDecl
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if d.Recv != nil {
-				// This is a method declaration
-				methodFuncs = append(methodFuncs, d)
-				fmt.Printf("Found method: %s with receiver\n", d.Name.Name)
-			} else if d.Name.Name == "main" {
-				mainFunc = d
-				fmt.Printf("Found main function\n")
-			} else {
-				// Regular function declaration
-				otherFuncs = append(otherFuncs, d)
-				fmt.Printf("Found function: %s\n", d.Name.Name)
-			}
-		case *ast.GenDecl:
-			// Handle type declarations
-			if d.Tok == token.TYPE {
-				typeDecls = append(typeDecls, d)
-				fmt.Printf("Found type declaration\n")
-			} else if d.Tok == token.IMPORT {
-				// Handle import declarations
-				importDecls = append(importDecls, d)
-				fmt.Printf("Found import declaration\n")
-			} else if d.Tok == token.VAR {
-				// Handle variable declarations
-				varDecls = append(varDecls, d)
-				fmt.Printf("Found variable declaration\n")
-			}
-		}
+	// Get package name from AST
+	if file.Name != nil {
+		c.packageName = file.Name.Name
 	}
+
+	// Update compile context with proper package name
+	c.compileContext = context.NewCompileContext(c.packageName, nil)
+	c.currentScopeKey = c.packageName
+	c.currentInstructions = make([]*instruction.Instruction, 0)
 
 	// Process import declarations first
-	for _, decl := range importDecls {
-		err := c.compileImportDecl(decl)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Process variable declarations (collect global variables)
-	for _, decl := range varDecls {
-		err := c.collectGlobalVars(decl)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Pre-declare global variables
-	for varName := range c.globalVars {
-		// Emit instructions to create global variables
-		c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, varName, nil))
-	}
-
-	// Process type declarations
-	for _, decl := range typeDecls {
-		err := c.compileTypeDecl(decl)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Process variable declarations (compile initial values)
-	for _, decl := range varDecls {
-		err := c.compileVarDecl(decl)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Process method declarations (create function info first)
-	for _, fn := range methodFuncs {
-		// For methods, we need to create function info first
-		err := c.createFunctionInfo(fn)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Process other function declarations (create function info first)
-	for _, fn := range otherFuncs {
-		// For regular functions, we need to create function info first
-		err := c.createFunctionInfo(fn)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Process method declarations (register them)
-	for _, fn := range methodFuncs {
-		err := c.compileFunctionRegistration(fn)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Process other function declarations (register them)
-	for _, fn := range otherFuncs {
-		err := c.compileFunctionRegistration(fn)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Compile main function
-	if mainFunc != nil {
-		err := c.compileBlockStmt(mainFunc.Body)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Now compile method bodies
-	for _, fn := range methodFuncs {
-		err := c.compileFunctionBody(fn)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Compile other function bodies
-	for _, fn := range otherFuncs {
-		err := c.compileFunctionBody(fn)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// collectGlobalVars collects global variable names
-func (c *Compiler) collectGlobalVars(decl *ast.GenDecl) error {
-	// Process each specification in the declaration
-	for _, spec := range decl.Specs {
-		valueSpec, ok := spec.(*ast.ValueSpec)
-		if !ok {
-			return fmt.Errorf("unsupported value spec type: %T", spec)
-		}
-
-		// For each variable name in the spec
-		for _, name := range valueSpec.Names {
-			// Add to global variables map
-			c.globalVars[name.Name] = true
-		}
-	}
-
-	return nil
-}
-
-// compileVarDecl compiles a variable declaration
-func (c *Compiler) compileVarDecl(decl *ast.GenDecl) error {
-	// Process each specification in the declaration
-	for _, spec := range decl.Specs {
-		valueSpec, ok := spec.(*ast.ValueSpec)
-		if !ok {
-			return fmt.Errorf("unsupported value spec type: %T", spec)
-		}
-
-		// For each variable name in the spec
-		for i, name := range valueSpec.Names {
-			// If there's an initial value, compile and assign it
-			if i < len(valueSpec.Values) {
-				err := c.compileExpr(valueSpec.Values[i])
-				if err != nil {
-					return err
-				}
-				c.emitInstruction(vm.NewInstruction(vm.OpStoreName, name.Name, nil))
-			} else {
-				// Initialize with zero value
-				c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
-				c.emitInstruction(vm.NewInstruction(vm.OpStoreName, name.Name, nil))
+	for _, decl := range file.Decls {
+		if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok == token.IMPORT {
+			if err := c.compileGenDecl(genDecl); err != nil {
+				return err
 			}
 		}
 	}
 
+	// Store package-level instructions if any
+	if len(c.currentInstructions) > 0 {
+		c.compileContext.SetInstructions(c.packageName, c.currentInstructions)
+	}
+
+	// Process function declarations
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			if err := c.compileFunction(fn); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Transfer all compiled instructions to the VM
+	return c.transferInstructions()
+}
+
+// compileGenDecl compiles general declarations (variables, types, etc.)
+func (c *Compiler) compileGenDecl(decl *ast.GenDecl) error {
+	switch decl.Tok {
+	case token.IMPORT:
+		// Handle import declarations
+		return c.compileImportDecl(decl)
+	case token.VAR:
+		// Handle variable declarations
+		return c.compileVarDecl(decl)
+	case token.TYPE:
+		// Handle type declarations (structs, etc.)
+		return c.compileTypeDecl(decl)
+	}
 	return nil
 }
 
-// compileImportDecl compiles an import declaration
+// compileImportDecl compiles import declarations
 func (c *Compiler) compileImportDecl(decl *ast.GenDecl) error {
-	// Process each specification in the declaration
 	for _, spec := range decl.Specs {
 		if importSpec, ok := spec.(*ast.ImportSpec); ok {
 			// Get the import path (remove quotes)
-			importPath := importSpec.Path.Value
-			if len(importPath) >= 2 && importPath[0] == '"' && importPath[len(importPath)-1] == '"' {
-				importPath = importPath[1 : len(importPath)-1]
+			path := importSpec.Path.Value
+			if len(path) > 2 {
+				path = path[1 : len(path)-1] // Remove quotes
 			}
 
-			// Add to imports list
-			c.imports = append(c.imports, importPath)
-
-			// Get the import name (either alias or package name)
-			var importName string
+			// Get the package name (either explicit or inferred from path)
+			var pkgName string
 			if importSpec.Name != nil {
-				// Use alias
-				importName = importSpec.Name.Name
+				pkgName = importSpec.Name.Name
 			} else {
-				// Use package name (last part of path)
-				parts := strings.Split(importPath, "/")
-				importName = parts[len(parts)-1]
+				// Infer package name from path (simplified approach)
+				parts := strings.Split(path, "/")
+				pkgName = parts[len(parts)-1]
 			}
 
-			// For import statements in scripts, we need to make the module available
-			// We'll emit the new OpImport instruction to handle module imports
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, importPath, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpImport, nil, nil))
+			// Store the imported module
+			c.importedModules[pkgName] = path
 
-			// Also store the module name as a variable so it can be referenced
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, importName, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, importName, nil))
+			// Emit the import instruction
+			c.emitInstruction(instruction.NewInstruction(instruction.OpImport, path, pkgName))
 
-			fmt.Printf("Compiled import: %s as %s\n", importPath, importName)
+			// Also create a variable for the module with "module" type
+			// This will allow us to handle module calls uniformly with method calls
+			c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, pkgName, "module"))
 		}
 	}
-
 	return nil
 }
 
-// compileTypeDecl compiles a type declaration
+// compileVarDecl compiles variable declarations
+func (c *Compiler) compileVarDecl(decl *ast.GenDecl) error {
+	for _, spec := range decl.Specs {
+		if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+			// Handle each variable in the declaration
+			for i, name := range valueSpec.Names {
+				// Create the variable
+				c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, name.Name, nil))
+
+				// If there's an initial value, compile it and assign it
+				if i < len(valueSpec.Values) && valueSpec.Values[i] != nil {
+					if err := c.compileExpr(valueSpec.Values[i]); err != nil {
+						return err
+					}
+					c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, name.Name, nil))
+				} else {
+					// Initialize with nil if no initial value
+					c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, nil, nil))
+					c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, name.Name, nil))
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// compileTypeDecl compiles type declarations
 func (c *Compiler) compileTypeDecl(decl *ast.GenDecl) error {
-	// Process each specification in the declaration
+	// For now, we'll just acknowledge type declarations
+	// In a more complete implementation, we would process struct definitions, etc.
 	for _, spec := range decl.Specs {
 		if typeSpec, ok := spec.(*ast.TypeSpec); ok {
-			// Get the type name
-			typeName := typeSpec.Name.Name
-
-			// Process the type based on its structure
-			switch t := typeSpec.Type.(type) {
-			case *ast.StructType:
-				// Handle struct type declaration
-				err := c.compileStructType(typeName, t)
-				if err != nil {
-					return err
-				}
-			case *ast.InterfaceType:
-				// Handle interface type declaration
-				err := c.compileInterfaceType(typeName, t)
-				if err != nil {
-					return err
-				}
-			}
+			fmt.Printf("Compiling type declaration: %s\n", typeSpec.Name.Name)
+			// TODO: Process struct types and other complex types
 		}
 	}
-
 	return nil
 }
 
-// compileStructType compiles a struct type declaration
-func (c *Compiler) compileStructType(name string, structType *ast.StructType) error {
-	// Create a new StructType
-	structTypeDef := types.NewStructType(name)
+// compileFunction compiles a function declaration
+func (c *Compiler) compileFunction(fn *ast.FuncDecl) error {
+	// Generate function key
+	funcKey := c.generateFunctionKey(fn)
 
-	// Process fields
-	if structType.Fields != nil {
-		for _, field := range structType.Fields.List {
-			// Get field names
-			for _, fieldName := range field.Names {
-				// Get field type
-				fieldTypeName := getTypeName(field.Type)
-				fieldType, err := types.GetTypeByName(fieldTypeName)
-				if err != nil {
-					// For now, we'll just print a warning and use a default type
-					fmt.Printf("Warning: Unknown field type %s, using interface{} as default\n", fieldTypeName)
-					fieldType = types.NewInterfaceType("")
-				}
+	// Save current state
+	prevScopeKey := c.currentScopeKey
+	prevInstructions := c.currentInstructions
 
-				// Get field tag if present
-				var tag string
-				if field.Tag != nil {
-					tag = field.Tag.Value
-				}
+	// Set new scope key
+	c.currentScopeKey = funcKey
+	c.currentInstructions = make([]*instruction.Instruction, 0)
 
-				// Add field to struct type
-				structTypeDef.AddField(fieldName.Name, fieldType, tag)
+	// Collect parameter names
+	var paramNames []string
+
+	// Compile receiver parameter if this is a method
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		// This is a method, compile the receiver parameter
+		for _, param := range fn.Recv.List {
+			for _, name := range param.Names {
+				c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, name.Name, nil))
+				// Note: We don't load parameter values here because they will be set by VM when calling the function
+				// The VM will map the actual arguments to these parameter names
+				paramNames = append(paramNames, name.Name)
 			}
 		}
 	}
 
-	// Register the struct type in the context
-	fmt.Printf("Compiling struct type: %s with fields %v\n", name, structTypeDef.GetFieldNames())
-
-	// Register the struct type in the VM's type system
-	c.vm.RegisterType(name, structTypeDef)
-
-	return nil
-}
-
-// compileInterfaceType compiles an interface type declaration
-func (c *Compiler) compileInterfaceType(name string, interfaceType *ast.InterfaceType) error {
-	// Create a new InterfaceType
-	interfaceTypeDef := types.NewInterfaceType(name)
-
-	// Process methods and embedded interfaces
-	if interfaceType.Methods != nil {
-		for _, method := range interfaceType.Methods.List {
-			switch {
-			case method.Names != nil:
-				// This is a method declaration
-				for _, methodName := range method.Names {
-					// Get method signature
-					methodType := method.Type.(*ast.FuncType)
-
-					// Process parameters
-					var params []types.IType
-					if methodType.Params != nil {
-						for _, param := range methodType.Params.List {
-							// Get parameter type
-							paramTypeName := getTypeName(param.Type)
-							paramType, err := types.GetTypeByName(paramTypeName)
-							if err != nil {
-								// For now, we'll just print a warning and use a default type
-								fmt.Printf("Warning: Unknown parameter type %s, using interface{} as default\n", paramTypeName)
-								paramType = types.NewInterfaceType("")
-							}
-							for range param.Names {
-								params = append(params, paramType)
-							}
-						}
-					}
-
-					// Process return values
-					var returns []types.IType
-					if methodType.Results != nil {
-						for _, result := range methodType.Results.List {
-							// Get return type
-							returnTypeName := getTypeName(result.Type)
-							returnType, err := types.GetTypeByName(returnTypeName)
-							if err != nil {
-								// For now, we'll just print a warning and use a default type
-								fmt.Printf("Warning: Unknown return type %s, using interface{} as default\n", returnTypeName)
-								returnType = types.NewInterfaceType("")
-							}
-							for range result.Names {
-								returns = append(returns, returnType)
-							}
-						}
-					}
-
-					// Add method to interface type
-					interfaceTypeDef.AddMethod(methodName.Name, params, returns)
+	// Compile function parameters as local variables
+	if fn.Type.Params != nil {
+		for _, param := range fn.Type.Params.List {
+			// Handle parameters with explicit names
+			if len(param.Names) > 0 {
+				for _, name := range param.Names {
+					c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, name.Name, nil))
+					// Note: We don't load parameter values here because they will be set by VM when calling the function
+					// The VM will map the actual arguments to these parameter names
+					paramNames = append(paramNames, name.Name)
 				}
-			default:
-				// This is an embedded interface
-				embeddedTypeName := getTypeName(method.Type)
-				embeddedType, err := types.GetTypeByName(embeddedTypeName)
-				if err != nil {
-					// For now, we'll just print a warning and use a default type
-					fmt.Printf("Warning: Unknown embedded interface type %s, using interface{} as default\n", embeddedTypeName)
-					embeddedType = types.NewInterfaceType("")
-				}
-				interfaceTypeDef.AddEmbedded(embeddedType)
-			}
-		}
-	}
-
-	// Register the interface type in the context
-	fmt.Printf("Compiling interface type: %s with methods %v\n", name, getInterfaceMethodNames(interfaceTypeDef))
-
-	// TODO: Register the interface type in the runtime context
-
-	return nil
-}
-
-// Helper function to get type name from ast.Expr
-func getTypeName(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.SelectorExpr:
-		// For now, we'll just return the selector name
-		return t.Sel.Name
-	case *ast.StarExpr:
-		// Pointer type
-		return "*" + getTypeName(t.X)
-	case *ast.ArrayType:
-		if t.Len == nil {
-			// Slice type
-			return "[]" + getTypeName(t.Elt)
-		} else {
-			// Array type
-			return "[" + getTypeName(t.Len) + "]" + getTypeName(t.Elt)
-		}
-	default:
-		return "interface{}"
-	}
-}
-
-// Helper function to get method names from an interface type
-func getInterfaceMethodNames(_ *types.InterfaceType) []string {
-	methods := make([]string, 0)
-	// We can't directly access the methods map, so we'll return a placeholder
-	// In a real implementation, we would have a method to get method names
-	methods = append(methods, "[methods]")
-	return methods
-}
-
-// compileFunctionRegistration generates OpRegistFunction instruction for a function
-func (c *Compiler) compileFunctionRegistration(fn *ast.FuncDecl) error {
-	// Get function name
-	var funcName string
-	if fn.Recv != nil {
-		// This is a method declaration
-		// Get receiver type name to create a unique method name
-		var receiverTypeName string
-		if len(fn.Recv.List) > 0 {
-			receiver := fn.Recv.List[0]
-			// Extract type name from receiver
-			switch t := receiver.Type.(type) {
-			case *ast.Ident:
-				receiverTypeName = t.Name
-			case *ast.StarExpr:
-				if ident, ok := t.X.(*ast.Ident); ok {
-					receiverTypeName = ident.Name
+			} else {
+				// Handle parameters without explicit names (e.g., in simplified syntax where name is in the type field)
+				// In GoScript's simplified syntax, the parameter name might be stored in the type field
+				if ident, ok := param.Type.(*ast.Ident); ok {
+					// The parameter name is stored in the type field
+					paramName := ident.Name
+					c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, paramName, nil))
+					paramNames = append(paramNames, paramName)
 				}
 			}
-
-			// Create unique method name
-			funcName = receiverTypeName + "." + fn.Name.Name
-		} else {
-			funcName = fn.Name.Name
 		}
-	} else {
-		// This is a regular function
-		funcName = fn.Name.Name
 	}
 
-	fmt.Printf("Compiling function registration for: %s\n", funcName)
-
-	// Get function info
-	funcInfo, exists := c.functionMap[funcName]
-	if !exists {
-		return fmt.Errorf("function %s not found in function map", funcName)
-	}
-
-	// Generate OpRegistFunction instruction
-	c.emitInstruction(vm.NewInstruction(vm.OpRegistFunction, funcName, funcInfo.ScriptFunction))
-	fmt.Printf("Emitted OpRegistFunction for: %s\n", funcName)
-
-	return nil
-}
-
-// compileFunctionBody compiles a function body
-func (c *Compiler) compileFunctionBody(fn *ast.FuncDecl) error {
-	// Get function name
-	var funcName string
-	if fn.Recv != nil {
-		// This is a method
-		// Get receiver type name to create a unique method name
-		var receiverTypeName string
-		if len(fn.Recv.List) > 0 {
-			receiver := fn.Recv.List[0]
-			// Extract type name from receiver
-			switch t := receiver.Type.(type) {
-			case *ast.Ident:
-				receiverTypeName = t.Name
-			case *ast.StarExpr:
-				if ident, ok := t.X.(*ast.Ident); ok {
-					receiverTypeName = ident.Name
-				}
-			}
-
-			// Create unique method name
-			funcName = receiverTypeName + "." + fn.Name.Name
-		} else {
-			funcName = fn.Name.Name
-		}
-	} else {
-		// This is a regular function
-		funcName = fn.Name.Name
-	}
-
-	// Get existing function info
-	funcInfo, exists := c.functionMap[funcName]
-	if !exists {
-		return fmt.Errorf("function %s not found in function map", funcName)
-	}
-
-	// Set the start IP for the function
-	funcInfo.ScriptFunction.StartIP = c.ip
-
-	// Generate code to store parameters as local variables
-	// Parameters are pushed onto the stack in reverse order during function call
-	// We need to pop them and store them as local variables with their original names
-	for i := len(funcInfo.ParamNames) - 1; i >= 0; i-- {
-		paramName := funcInfo.ParamNames[i]
-		// Pop parameter from stack and store as local variable
-		c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, paramName, nil))
-		c.emitInstruction(vm.NewInstruction(vm.OpStoreName, paramName, nil))
-	}
-
-	// Compile the function body
-	err := c.compileBlockStmt(fn.Body)
-	if err != nil {
+	// Compile function body
+	if err := c.compileBlockStmt(fn.Body); err != nil {
+		// Restore previous state
+		c.currentScopeKey = prevScopeKey
+		c.currentInstructions = prevInstructions
 		return err
 	}
 
-	// Set the end IP for the function
-	funcInfo.ScriptFunction.EndIP = c.ip
+	// Store instructions in compile context with function key
+	if len(c.currentInstructions) > 0 {
+		c.compileContext.SetInstructions(funcKey, c.currentInstructions)
+	}
 
-	// If function doesn't have an explicit return, add one
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpReturn, nil, nil))
+	// Restore previous state
+	c.currentScopeKey = prevScopeKey
+	c.currentInstructions = prevInstructions
+
+	// Register function with VM
+	scriptFunc := &vm.ScriptFunctionInfo{
+		Name:       fn.Name.Name,
+		Key:        funcKey,
+		ParamCount: c.getParamCount(fn),
+		ParamNames: paramNames,
+	}
+	c.vm.RegisterScriptFunction(fn.Name.Name, scriptFunc)
 
 	return nil
 }
 
-// compileBlockStmt compiles a block statement
+// generateFunctionKey generates a unique key for a function
+func (c *Compiler) generateFunctionKey(fn *ast.FuncDecl) string {
+	// Check if this is a method (has receiver)
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		// This is a method, generate key in format "struct.method"
+		// Get the receiver type name
+		if len(fn.Recv.List) > 0 {
+			receiver := fn.Recv.List[0]
+			if len(receiver.Names) > 0 {
+				// Get receiver type name
+				typeName := c.getTypeNameWithPointer(receiver.Type)
+				if typeName != "" {
+					return fmt.Sprintf("%s.%s", typeName, fn.Name.Name)
+				}
+			}
+		}
+	}
+
+	if fn.Name.Name == "main" {
+		return fmt.Sprintf("%s.main", c.packageName)
+	}
+	return fmt.Sprintf("%s.func.%s", c.packageName, fn.Name.Name)
+}
+
+// getTypeName extracts the type name from an AST expression
+func (c *Compiler) getTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		// Pointer type, get the underlying type
+		return c.getTypeName(t.X)
+	case *ast.SelectorExpr:
+		// Qualified type, e.g., pkg.Type
+		if ident, ok := t.X.(*ast.Ident); ok {
+			return fmt.Sprintf("%s.%s", ident.Name, t.Sel.Name)
+		}
+	}
+	return ""
+}
+
+// getTypeNameWithPointer extracts the type name from an AST expression, including pointer information
+func (c *Compiler) getTypeNameWithPointer(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		// Pointer type, get the underlying type and prefix with "*"
+		underlyingType := c.getTypeName(t.X)
+		return fmt.Sprintf("*%s", underlyingType)
+	case *ast.SelectorExpr:
+		// Qualified type, e.g., pkg.Type
+		if ident, ok := t.X.(*ast.Ident); ok {
+			return fmt.Sprintf("%s.%s", ident.Name, t.Sel.Name)
+		}
+	}
+	return ""
+}
+
+// getParamCount gets the number of parameters for a function
+func (c *Compiler) getParamCount(fn *ast.FuncDecl) int {
+	if fn.Type.Params == nil {
+		return 0
+	}
+	count := 0
+	for _, param := range fn.Type.Params.List {
+		count += len(param.Names)
+	}
+	return count
+}
+
+// compileBlockStmt compiles a block statement with key-based scope management
 func (c *Compiler) compileBlockStmt(block *ast.BlockStmt) error {
 	// Generate a unique scope key for this block
-	scopeKey := fmt.Sprintf("block_%d", c.ip)
+	scopeKey := c.generateKey("block")
 
 	// Emit instruction to enter the block scope
-	c.emitInstruction(vm.NewInstruction(instruction.OpEnterScopeWithKey, scopeKey, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpEnterScopeWithKey, scopeKey, nil))
 
 	// Compile each statement in the block
 	for _, stmt := range block.List {
-		err := c.compileStmt(stmt)
-		if err != nil {
+		if err := c.compileStmt(stmt); err != nil {
 			return err
 		}
 	}
 
 	// Emit instruction to exit the block scope
-	c.emitInstruction(vm.NewInstruction(instruction.OpExitScopeWithKey, scopeKey, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpExitScopeWithKey, scopeKey, nil))
 
 	return nil
 }
@@ -627,154 +374,105 @@ func (c *Compiler) compileStmt(stmt ast.Stmt) error {
 		return c.compileForStmt(s)
 	case *ast.RangeStmt:
 		return c.compileRangeStmt(s)
+	case *ast.BlockStmt:
+		return c.compileBlockStmt(s)
 	case *ast.IncDecStmt:
 		return c.compileIncDecStmt(s)
 	case *ast.DeclStmt:
-		return c.compileDeclStmt(s)
-	case *ast.BlockStmt:
-		return c.compileBlockStmt(s)
+		// Handle declaration statements (local variables)
+		if genDecl, ok := s.Decl.(*ast.GenDecl); ok {
+			return c.compileGenDecl(genDecl)
+		}
+	case *ast.SwitchStmt:
+		return c.compileSwitchStmt(s)
+	case *ast.LabeledStmt:
+		// Handle labeled statements
+		return c.compileLabeledStmt(s)
 	case *ast.BranchStmt:
+		// Handle branch statements (goto, break, continue, fallthrough)
 		return c.compileBranchStmt(s)
 	default:
 		return fmt.Errorf("unsupported statement type: %T", stmt)
 	}
-}
-
-// compileDeclStmt compiles a declaration statement
-func (c *Compiler) compileDeclStmt(stmt *ast.DeclStmt) error {
-	// For now, we only support simple variable declarations
-	// In a full implementation, this would handle all kinds of declarations
-	genDecl, ok := stmt.Decl.(*ast.GenDecl)
-	if !ok {
-		return fmt.Errorf("unsupported declaration type: %T", stmt.Decl)
-	}
-
-	// Process each specification in the declaration
-	for _, spec := range genDecl.Specs {
-		valueSpec, ok := spec.(*ast.ValueSpec)
-		if !ok {
-			return fmt.Errorf("unsupported value spec type: %T", spec)
-		}
-
-		// For each variable name in the spec
-		for i, name := range valueSpec.Names {
-			// Create the variable first
-			c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, name.Name, nil))
-
-			// If there's an initial value, compile and assign it
-			if i < len(valueSpec.Values) {
-				err := c.compileExpr(valueSpec.Values[i])
-				if err != nil {
-					return err
-				}
-				c.emitInstruction(vm.NewInstruction(vm.OpStoreName, name.Name, nil))
-			} else {
-				// Initialize with zero value
-				c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
-				c.emitInstruction(vm.NewInstruction(vm.OpStoreName, name.Name, nil))
-			}
-		}
-	}
-
 	return nil
 }
 
 // compileRangeStmt compiles a range statement
 func (c *Compiler) compileRangeStmt(stmt *ast.RangeStmt) error {
-	// More complete implementation of range statement
-	// This will iterate over the elements of a slice
+	// Generate unique names for loop variables
+	rangeVarName := c.generateKey("range_var")
+	counterVarName := c.generateKey("range_counter")
+	lengthVarName := c.generateKey("range_length")
 
-	// Compile the expression being ranged over (the slice)
-	err := c.compileExpr(stmt.X)
-	if err != nil {
+	// Compile the expression being ranged over
+	if err := c.compileExpr(stmt.X); err != nil {
 		return err
 	}
 
-	// Create and store the slice in a temporary variable
-	c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, "_range_slice", nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_slice", nil))
+	// Store the collection in a temporary variable
+	c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, rangeVarName, nil))
 
-	// Load the slice again
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_slice", nil))
+	// Get the length of the collection and store it
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, rangeVarName, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLen, nil, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, lengthVarName, nil))
 
-	// Get the length of the slice
-	c.emitInstruction(vm.NewInstruction(vm.OpLen, nil, nil))
+	// Create loop counter variable (initialized to 0)
+	c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, counterVarName, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, 0, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, counterVarName, nil))
 
-	// Create and store the length in a temporary variable
-	c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, "_range_length", nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_length", nil))
+	// Save the start IP for looping
+	startIP := len(c.currentInstructions)
 
-	// Initialize counter
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, 0, nil)) // counter = 0
-	c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, "_range_counter", nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_counter", nil))
+	// Check loop condition: counter < length
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, counterVarName, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, lengthVarName, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpLess, nil))
 
-	// Start of loop
-	startIP := c.ip
-
-	// Check counter < length
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_length", nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpLess, nil))
-
-	// Jump if condition is false (counter >= length)
-	jumpIfInstr := vm.NewInstruction(vm.OpJumpIf, 0, nil) // Placeholder target
+	// Emit a conditional jump to exit the loop (when condition is false)
+	jumpIfInstr := instruction.NewInstruction(instruction.OpJumpIf, 0, nil) // Placeholder target
 	c.emitInstruction(jumpIfInstr)
 
-	// If there's a key variable, assign the current counter value to it
-	// But skip if the key is the blank identifier "_"
+	// Set up loop variables if needed
 	if stmt.Key != nil {
-		if ident, ok := stmt.Key.(*ast.Ident); ok && ident.Name != "_" {
-			// Create and store the current counter value in the key variable
-			c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, ident.Name, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, ident.Name, nil))
+		// For range with key (index)
+		if keyIdent, ok := stmt.Key.(*ast.Ident); ok {
+			// Set the key variable to the current counter value
+			c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, keyIdent.Name, nil))
+			c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, counterVarName, nil))
+			c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, keyIdent.Name, nil))
 		}
 	}
 
-	// If there's a value variable, assign the current element value to it
 	if stmt.Value != nil {
-		// Load the slice
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_slice", nil))
-
-		// Load the current counter (index)
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
-
-		// Get the element at the index
-		c.emitInstruction(vm.NewInstruction(vm.OpGetElement, nil, nil))
-
-		// Create and store it in the value variable
-		if ident, ok := stmt.Value.(*ast.Ident); ok {
-			c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, ident.Name, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, ident.Name, nil))
+		// For range with value
+		if valueIdent, ok := stmt.Value.(*ast.Ident); ok {
+			// Get the value from the collection at the current index
+			c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, valueIdent.Name, nil))
+			c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, rangeVarName, nil))
+			c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, counterVarName, nil))
+			c.emitInstruction(instruction.NewInstruction(instruction.OpGetIndex, nil, nil))
+			c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, valueIdent.Name, nil))
 		}
 	}
 
-	// Compile the loop body
-	err = c.compileBlockStmt(stmt.Body)
-	if err != nil {
+	// Compile the loop body with its own scope
+	if err := c.compileBlockStmt(stmt.Body); err != nil {
 		return err
 	}
 
-	// Increment counter
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, "_range_counter", nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, 1, nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpAdd, nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_counter", nil))
+	// Increment the counter
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, counterVarName, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, 1, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpAdd, nil))
+	c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, counterVarName, nil))
 
-	// Jump back to start
-	c.emitInstruction(vm.NewInstruction(vm.OpJump, startIP, nil))
+	// Emit an unconditional jump back to the start
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, startIP, nil))
 
-	// Update jump target to after the loop
-	jumpIfInstr.Arg = c.ip
-
-	// Clean up temporary variables
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_counter", nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_length", nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
-	c.emitInstruction(vm.NewInstruction(vm.OpStoreName, "_range_slice", nil))
+	// Update the conditional jump target to after the loop
+	jumpIfInstr.Arg = len(c.currentInstructions)
 
 	return nil
 }
@@ -786,598 +484,333 @@ func (c *Compiler) compileExprStmt(stmt *ast.ExprStmt) error {
 
 // compileAssignStmt compiles an assignment statement
 func (c *Compiler) compileAssignStmt(stmt *ast.AssignStmt) error {
-	// Handle assignment operators
-	switch stmt.Tok {
-	case token.ASSIGN, token.DEFINE:
-		// Compile the right-hand side expression
-		err := c.compileExpr(stmt.Rhs[0])
-		if err != nil {
+	// Handle the left-hand side first for index expressions and selector expressions
+	switch lhs := stmt.Lhs[0].(type) {
+	case *ast.IndexExpr:
+		// Handle index assignment (e.g., array[index] = value)
+		// For index assignment, we need to compile in a specific order:
+		// 1. Compile the collection (e.g., array)
+		// 2. Compile the index (e.g., index)
+		// 3. Compile the value to assign
+		// 4. Emit SET_INDEX instruction
+
+		// Compile the expression being indexed (e.g., array)
+		if err := c.compileExpr(lhs.X); err != nil {
 			return err
 		}
 
-		// Handle the left-hand side
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			// For short variable declaration (:=), create the variable first
-			if stmt.Tok == token.DEFINE {
-				c.emitInstruction(vm.NewInstruction(vm.OpCreateVar, lhs.Name, nil))
-			}
-			// Store the result in the variable
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
-
-			// Track variable type if we can determine it from the RHS
-			if compositeLit, ok := stmt.Rhs[0].(*ast.CompositeLit); ok {
-				if typeIdent, ok := compositeLit.Type.(*ast.Ident); ok {
-					c.variableTypes[lhs.Name] = typeIdent.Name
-				}
-			}
-		case *ast.SelectorExpr:
-			// Handle field assignment (e.g., obj.field = value)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// The value to assign is already on the stack from RHS compilation
-			// Emit instruction to set the field (arguments are in reverse order on stack)
-			// Stack: [value, object, fieldName] -> OpSetStructField takes: [object, fieldName, value]
-			// So we need to rotate the stack
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index assignment (e.g., array[index] = value)
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// The value to assign is already on the stack from RHS compilation
-			// At this point, the stack should have: [value, array, index]
-			// But OpSetIndex expects: [array, index, value]
-			// So we need to rearrange the stack
-
-			// Emit instruction to rotate the top three elements
-			// This will change [value, array, index] to [array, index, value]
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-
-			// Emit instruction to set the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
-		default:
-			return fmt.Errorf("unsupported assignment target: %T", lhs)
-		}
-	case token.ADD_ASSIGN:
-		// Handle += operator
-		// First load the current value of the variable
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, lhs.Name, nil))
-		case *ast.SelectorExpr:
-			// Handle field access (e.g., obj.field)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// Emit instruction to get the field
-			c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index access (e.g., array[index])
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// Emit instruction to get the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
-		default:
-			return fmt.Errorf("unsupported assignment target for +=: %T", lhs)
-		}
-
-		// Compile the right-hand side expression
-		err := c.compileExpr(stmt.Rhs[0])
-		if err != nil {
+		// Compile the index expression (e.g., index)
+		if err := c.compileExpr(lhs.Index); err != nil {
 			return err
 		}
 
-		// Add the values
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpAdd, nil))
+		// Handle compound assignment operators for index expressions
+		if stmt.Tok != token.ASSIGN { // Not a simple assignment
+			// For compound assignment, we need to load the current value first
+			// Emit GET_INDEX to get the current value
+			c.emitInstruction(instruction.NewInstruction(instruction.OpGetIndex, nil, nil))
 
-		// Store the result back
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
-		case *ast.SelectorExpr:
-			// Handle field assignment (e.g., obj.field += value)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
+			// Compile the right-hand side expression
+			if err := c.compileExpr(stmt.Rhs[0]); err != nil {
 				return err
 			}
 
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// The value to assign is already on the stack from the addition operation
-			// Stack at this point: [result, object, fieldName]
-			// But OpSetStructField expects: [object, fieldName, result]
-			// So we need to rotate the stack
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index assignment (e.g., array[index] += value)
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
+			// Apply the binary operation
+			switch stmt.Tok {
+			case token.ADD_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpAdd, nil))
+			case token.SUB_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpSub, nil))
+			case token.MUL_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpMul, nil))
+			case token.QUO_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpDiv, nil))
+			case token.REM_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpMod, nil))
+			default:
+				return fmt.Errorf("unsupported compound assignment operator: %s", stmt.Tok)
+			}
+		} else {
+			// Simple assignment
+			// Compile the right-hand side expression (the value to assign)
+			err := c.compileExpr(stmt.Rhs[0])
 			if err != nil {
 				return err
 			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// The value to assign is already on the stack from the addition operation
-			// At this point, the stack should have: [result, array, index]
-			// But OpSetIndex expects: [array, index, result]
-			// So we need to rearrange the stack
-
-			// Emit instruction to rotate the top three elements
-			// This will change [result, array, index] to [array, index, result]
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-
-			// Emit instruction to set the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
-		}
-	case token.SUB_ASSIGN:
-		// Handle -= operator
-		// First load the current value of the variable
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, lhs.Name, nil))
-		case *ast.SelectorExpr:
-			// Handle field access (e.g., obj.field)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// Emit instruction to get the field
-			c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index access (e.g., array[index])
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// Emit instruction to get the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
-		default:
-			return fmt.Errorf("unsupported assignment target for -=: %T", lhs)
 		}
 
-		// Compile the right-hand side expression
-		err := c.compileExpr(stmt.Rhs[0])
-		if err != nil {
-			return err
+		// Emit the SET_INDEX instruction
+		c.emitInstruction(instruction.NewInstruction(instruction.OpSetIndex, nil, nil))
+		return nil
+	case *ast.SelectorExpr:
+		// Handle selector assignment (e.g., struct.field = value)
+		// For selector assignment, we need to compile in a specific order:
+		// 1. Compile the expression being selected (e.g., struct)
+		// 2. Compile the value to assign
+		// 3. Emit SET_FIELD instruction with field name as argument
+
+		// Handle compound assignment operators for selector expressions
+		if stmt.Tok != token.ASSIGN { // Not a simple assignment
+			// For compound assignment, we need to:
+			// 1. Load the struct
+			if err := c.compileExpr(lhs.X); err != nil {
+				return err
+			}
+			// 2. Get the current value
+			c.emitInstruction(instruction.NewInstruction(instruction.OpGetField, lhs.Sel.Name, nil))
+
+			// Compile the right-hand side expression
+			if err := c.compileExpr(stmt.Rhs[0]); err != nil {
+				return err
+			}
+
+			// Apply the binary operation
+			switch stmt.Tok {
+			case token.ADD_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpAdd, nil))
+			case token.SUB_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpSub, nil))
+			case token.MUL_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpMul, nil))
+			case token.QUO_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpDiv, nil))
+			case token.REM_ASSIGN:
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpMod, nil))
+			default:
+				return fmt.Errorf("unsupported compound assignment operator: %s", stmt.Tok)
+			}
+
+			// For compound assignment, we need to load the struct again for SET_FIELD
+			// The stack at this point is: [new_value]
+			// We need to get: [struct, new_value]
+			if err := c.compileExpr(lhs.X); err != nil {
+				return err
+			}
+			// Stack is now: [new_value, struct]
+			// We need to swap to get: [struct, new_value]
+			c.emitInstruction(instruction.NewInstruction(instruction.OpSwap, nil, nil))
+		} else {
+			// Simple assignment
+			// Compile the expression being selected (e.g., struct)
+			if err := c.compileExpr(lhs.X); err != nil {
+				return err
+			}
+
+			// Compile the right-hand side expression (the value to assign)
+			err := c.compileExpr(stmt.Rhs[0])
+			if err != nil {
+				return err
+			}
+			// The stack order is already correct: [struct, value]
+			// No need to swap
 		}
 
-		// Subtract the values
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpSub, nil))
-
-		// Store the result back
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
-		case *ast.SelectorExpr:
-			// Handle field assignment (e.g., obj.field -= value)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// The value to assign is already on the stack from the subtraction operation
-			// Stack at this point: [result, object, fieldName]
-			// But OpSetStructField expects: [object, fieldName, result]
-			// So we need to rotate the stack
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index assignment (e.g., array[index] -= value)
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// The value to assign is already on the stack from the subtraction operation
-			// At this point, the stack should have: [result, array, index]
-			// But OpSetIndex expects: [array, index, result]
-			// So we need to rearrange the stack
-
-			// Emit instruction to rotate the top three elements
-			// This will change [result, array, index] to [array, index, result]
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-
-			// Emit instruction to set the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
-		}
-	case token.MUL_ASSIGN:
-		// Handle *= operator
-		// First load the current value of the variable
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, lhs.Name, nil))
-		case *ast.SelectorExpr:
-			// Handle field access (e.g., obj.field)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// Emit instruction to get the field
-			c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index access (e.g., array[index])
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// Emit instruction to get the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
-		default:
-			return fmt.Errorf("unsupported assignment target for *=: %T", lhs)
-		}
-
-		// Compile the right-hand side expression
-		err := c.compileExpr(stmt.Rhs[0])
-		if err != nil {
-			return err
-		}
-
-		// Multiply the values
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpMul, nil))
-
-		// Store the result back
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
-		case *ast.SelectorExpr:
-			// Handle field assignment (e.g., obj.field *= value)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// The value to assign is already on the stack from the multiplication operation
-			// Stack at this point: [result, object, fieldName]
-			// But OpSetStructField expects: [object, fieldName, result]
-			// So we need to rotate the stack
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index assignment (e.g., array[index] *= value)
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// The value to assign is already on the stack from the multiplication operation
-			// At this point, the stack should have: [result, array, index]
-			// But OpSetIndex expects: [array, index, result]
-			// So we need to rearrange the stack
-
-			// Emit instruction to rotate the top three elements
-			// This will change [result, array, index] to [array, index, result]
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-
-			// Emit instruction to set the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
-		}
-	case token.QUO_ASSIGN:
-		// Handle /= operator
-		// First load the current value of the variable
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadName, lhs.Name, nil))
-		case *ast.SelectorExpr:
-			// Handle field access (e.g., obj.field)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// Emit instruction to get the field
-			c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index access (e.g., array[index])
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// Emit instruction to get the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
-		default:
-			return fmt.Errorf("unsupported assignment target for /=: %T", lhs)
-		}
-
-		// Compile the right-hand side expression
-		err := c.compileExpr(stmt.Rhs[0])
-		if err != nil {
-			return err
-		}
-
-		// Divide the values
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpDiv, nil))
-
-		// Store the result back
-		switch lhs := stmt.Lhs[0].(type) {
-		case *ast.Ident:
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, lhs.Name, nil))
-		case *ast.SelectorExpr:
-			// Handle field assignment (e.g., obj.field /= value)
-			// Compile the object expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Push the field name as a constant
-			c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, lhs.Sel.Name, nil))
-
-			// The value to assign is already on the stack from the division operation
-			// Stack at this point: [result, object, fieldName]
-			// But OpSetStructField expects: [object, fieldName, result]
-			// So we need to rotate the stack
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
-		case *ast.IndexExpr:
-			// Handle index assignment (e.g., array[index] /= value)
-			// Compile the array/slice expression first
-			err := c.compileExpr(lhs.X)
-			if err != nil {
-				return err
-			}
-
-			// Compile the index expression
-			err = c.compileExpr(lhs.Index)
-			if err != nil {
-				return err
-			}
-
-			// The value to assign is already on the stack from the division operation
-			// At this point, the stack should have: [result, array, index]
-			// But OpSetIndex expects: [array, index, result]
-			// So we need to rearrange the stack
-
-			// Emit instruction to rotate the top three elements
-			// This will change [result, array, index] to [array, index, result]
-			c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-
-			// Emit instruction to set the element at the index
-			c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
-		}
-
-	default:
-		return fmt.Errorf("unsupported assignment operator: %s", stmt.Tok)
+		// Emit the SET_FIELD instruction with field name as argument
+		c.emitInstruction(instruction.NewInstruction(instruction.OpSetField, lhs.Sel.Name, nil))
+		return nil
 	}
 
+	// Handle compound assignment operators for regular variables
+	if stmt.Tok != token.ASSIGN && stmt.Tok != token.DEFINE { // Not a simple assignment or declaration
+		// For compound assignment, we need to load the current value first
+		switch lhs := stmt.Lhs[0].(type) {
+		case *ast.Ident:
+			c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, lhs.Name, nil))
+		default:
+			return fmt.Errorf("unsupported assignment target for compound assignment: %T", lhs)
+		}
+
+		// Compile the right-hand side expression
+		if err := c.compileExpr(stmt.Rhs[0]); err != nil {
+			return err
+		}
+
+		// Apply the binary operation
+		switch stmt.Tok {
+		case token.ADD_ASSIGN:
+			c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpAdd, nil))
+		case token.SUB_ASSIGN:
+			c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpSub, nil))
+		case token.MUL_ASSIGN:
+			c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpMul, nil))
+		case token.QUO_ASSIGN:
+			c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpDiv, nil))
+		case token.REM_ASSIGN:
+			c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpMod, nil))
+		default:
+			return fmt.Errorf("unsupported compound assignment operator: %s", stmt.Tok)
+		}
+	} else {
+		// For regular assignments, compile the right-hand side first
+		err := c.compileExpr(stmt.Rhs[0])
+		if err != nil {
+			return err
+		}
+	}
+
+	// Handle the left-hand side
+	switch lhs := stmt.Lhs[0].(type) {
+	case *ast.Ident:
+		// For short variable declaration (:=), create the variable first
+		if stmt.Tok == token.DEFINE {
+			c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, lhs.Name, nil))
+		}
+		// Store the result in the variable
+		c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, lhs.Name, nil))
+	default:
+		return fmt.Errorf("unsupported assignment target: %T", lhs)
+	}
 	return nil
 }
 
 // compileReturnStmt compiles a return statement
 func (c *Compiler) compileReturnStmt(stmt *ast.ReturnStmt) error {
-	// Compile the return expression if it exists
+	// If there are return values, compile them
 	if len(stmt.Results) > 0 {
-		err := c.compileExpr(stmt.Results[0])
-		if err != nil {
+		if err := c.compileExpr(stmt.Results[0]); err != nil {
 			return err
 		}
 	} else {
 		// If no return value, return nil
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, nil, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, nil, nil))
 	}
 
 	// Emit return instruction
-	c.emitInstruction(vm.NewInstruction(vm.OpReturn, nil, nil))
-
+	c.emitInstruction(instruction.NewInstruction(instruction.OpReturn, nil, nil))
 	return nil
 }
 
-// compileIfStmt compiles an if statement
+// compileIfStmt compiles an if statement using goto-based approach
 func (c *Compiler) compileIfStmt(stmt *ast.IfStmt) error {
 	// Compile the condition
-	err := c.compileExpr(stmt.Cond)
-	if err != nil {
+	if err := c.compileExpr(stmt.Cond); err != nil {
 		return err
 	}
 
-	// Emit a conditional jump instruction (placeholder target)
-	// Jump if condition is FALSE (skip the if body)
-	jumpIfInstr := vm.NewInstruction(vm.OpJumpIf, 0, nil) // Placeholder target
-	c.emitInstruction(jumpIfInstr)
+	// Generate labels for true and false branches
+	trueLabel := c.generateKey("if_true")
+	falseLabel := c.generateKey("if_false")
+	endLabel := c.generateKey("if_end")
 
-	// Compile the if body
-	err = c.compileBlockStmt(stmt.Body)
-	if err != nil {
-		return err
-	}
+	// Emit a conditional jump to the false branch if condition is false
+	// JUMP_IF jumps when the condition is FALSE, so if condition is false, jump to falseLabel
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJumpIf, falseLabel, nil))
 
-	// If there's an else block, we need to jump over it at the end of the if block
-	var elseJumpInstr *vm.Instruction
+	// If we reach here, condition was TRUE, so jump to true branch
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, trueLabel, nil))
+
+	// False branch (else part)
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, falseLabel, nil))
 	if stmt.Else != nil {
-		// Emit an unconditional jump to skip the else block
-		elseJumpInstr = vm.NewInstruction(vm.OpJump, 0, nil) // Placeholder target
-		c.emitInstruction(elseJumpInstr)
-	}
-
-	// Update the conditional jump target to after the if body
-	jumpIfInstr.Arg = c.ip
-
-	// Compile the else block if it exists
-	if stmt.Else != nil {
-		switch elseStmt := stmt.Else.(type) {
-		case *ast.BlockStmt:
-			err = c.compileBlockStmt(elseStmt)
-			if err != nil {
+		// Compile the else block
+		if elseStmt, ok := stmt.Else.(*ast.BlockStmt); ok {
+			if err := c.compileBlockStmt(elseStmt); err != nil {
 				return err
 			}
-		case *ast.IfStmt:
-			// Handle else if as a nested if statement
-			err = c.compileIfStmt(elseStmt)
-			if err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unsupported else statement type: %T", elseStmt)
 		}
-
-		// Update the else jump target to after the else block
-		elseJumpInstr.Arg = c.ip
 	}
+	// Jump to end after executing else block
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, endLabel, nil))
+
+	// True branch (if body)
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, trueLabel, nil))
+	if err := c.compileBlockStmt(stmt.Body); err != nil {
+		return err
+	}
+	// Jump to end after executing if body
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, endLabel, nil))
+
+	// End of if statement
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, endLabel, nil))
 
 	return nil
 }
 
-// compileForStmt compiles a for statement
+// compileForStmt compiles a for statement with key-based block management
 func (c *Compiler) compileForStmt(stmt *ast.ForStmt) error {
 	// Compile the init statement if it exists
 	if stmt.Init != nil {
-		err := c.compileStmt(stmt.Init)
-		if err != nil {
+		if err := c.compileStmt(stmt.Init); err != nil {
 			return err
 		}
 	}
 
 	// Save the start IP for looping
-	startIP := c.ip
+	startIP := len(c.currentInstructions)
 
 	// Compile the condition if it exists
 	if stmt.Cond != nil {
-		err := c.compileExpr(stmt.Cond)
-		if err != nil {
+		if err := c.compileExpr(stmt.Cond); err != nil {
 			return err
 		}
 
-		// Emit a conditional jump to exit the loop
-		jumpIfInstr := vm.NewInstruction(vm.OpJumpIf, 0, nil) // Placeholder target
+		// Emit a conditional jump to exit the loop (when condition is false)
+		// We need to jump to the instruction after the loop body when condition is false
+		jumpIfInstr := instruction.NewInstruction(instruction.OpJumpIf, 0, nil) // Placeholder target
 		c.emitInstruction(jumpIfInstr)
 
-		// Compile the loop body
-		err = c.compileBlockStmt(stmt.Body)
-		if err != nil {
+		// Compile the loop body with its own scope
+		if err := c.compileBlockStmt(stmt.Body); err != nil {
 			return err
 		}
 
 		// Compile the post statement if it exists
 		if stmt.Post != nil {
-			err = c.compileStmt(stmt.Post)
-			if err != nil {
+			if err := c.compileStmt(stmt.Post); err != nil {
 				return err
 			}
 		}
 
 		// Emit an unconditional jump back to the start
-		c.emitInstruction(vm.NewInstruction(vm.OpJump, startIP, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpJump, startIP, nil))
 
 		// Update the conditional jump target to after the loop
-		jumpIfInstr.Arg = c.ip
+		// This is where we exit the loop when condition is false
+		jumpIfInstr.Arg = len(c.currentInstructions)
 	} else {
-		// Infinite loop - compile the body
-		err := c.compileBlockStmt(stmt.Body)
-		if err != nil {
+		// Infinite loop - compile the body with its own scope
+		if err := c.compileBlockStmt(stmt.Body); err != nil {
 			return err
 		}
 
 		// Compile the post statement if it exists
 		if stmt.Post != nil {
-			err = c.compileStmt(stmt.Post)
-			if err != nil {
+			if err := c.compileStmt(stmt.Post); err != nil {
 				return err
 			}
 		}
 
 		// Emit an unconditional jump back to the start
-		c.emitInstruction(vm.NewInstruction(vm.OpJump, startIP, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpJump, startIP, nil))
+	}
+
+	return nil
+}
+
+// compileIncDecStmt compiles an increment or decrement statement
+func (c *Compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
+	// Load the current value of the variable
+	switch x := stmt.X.(type) {
+	case *ast.Ident:
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, x.Name, nil))
+	default:
+		return fmt.Errorf("unsupported increment/decrement target: %T", x)
+	}
+
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, 1, nil))
+	// Emit the appropriate instruction
+	if stmt.Tok == token.INC {
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpAdd, nil))
+	} else if stmt.Tok == token.DEC {
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpSub, nil))
+	}
+
+	// Store the result back
+	switch x := stmt.X.(type) {
+	case *ast.Ident:
+		c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, x.Name, nil))
+	default:
+		return fmt.Errorf("unsupported increment/decrement target: %T", x)
 	}
 
 	return nil
@@ -1396,12 +829,16 @@ func (c *Compiler) compileExpr(expr ast.Expr) error {
 		return c.compileIdent(e)
 	case *ast.ParenExpr:
 		return c.compileExpr(e.X)
-	case *ast.CompositeLit:
-		return c.compileCompositeLit(e)
-	case *ast.SelectorExpr:
-		return c.compileSelectorExpr(e)
 	case *ast.IndexExpr:
 		return c.compileIndexExpr(e)
+	case *ast.CompositeLit:
+		return c.compileCompositeLit(e)
+	case *ast.KeyValueExpr:
+		// For KeyValueExpr, we just need to compile the value
+		// The key is handled by the parent CompositeLit
+		return c.compileExpr(e.Value)
+	case *ast.SelectorExpr:
+		return c.compileSelectorExpr(e)
 	case *ast.UnaryExpr:
 		return c.compileUnaryExpr(e)
 	default:
@@ -1411,26 +848,122 @@ func (c *Compiler) compileExpr(expr ast.Expr) error {
 
 // compileUnaryExpr compiles a unary expression
 func (c *Compiler) compileUnaryExpr(expr *ast.UnaryExpr) error {
-	// Compile the operand
-	err := c.compileExpr(expr.X)
-	if err != nil {
+	// For now, we only handle the address operator (&)
+	if expr.Op == token.AND {
+		// For & expression, we just compile the operand
+		// In a more complete implementation, we would need to handle pointers properly
+		return c.compileExpr(expr.X)
+	}
+
+	return fmt.Errorf("unsupported unary operator: %s", expr.Op)
+}
+
+// compileCompositeLit compiles a composite literal (e.g., []int{1, 2, 3} or Person{name: "Alice"})
+func (c *Compiler) compileCompositeLit(lit *ast.CompositeLit) error {
+	// Check if this is a slice literal (no key specified for elements)
+	isSlice := len(lit.Elts) > 0
+	if isSlice {
+		// Check if the first element is not a KeyValueExpr, which indicates a slice
+		_, isKeyValue := lit.Elts[0].(*ast.KeyValueExpr)
+		isSlice = !isKeyValue
+	}
+
+	if isSlice {
+		// Handle slice literals like []int{1, 2, 3}
+		// Create a new slice with the appropriate size
+		c.emitInstruction(instruction.NewInstruction(instruction.OpNewSlice, len(lit.Elts), nil))
+
+		// Store the slice in a temporary variable so we can reference it multiple times
+		tempVarName := c.generateKey("slice_lit")
+		c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, tempVarName, nil))
+
+		// Compile each element and add it to the slice
+		for i, elem := range lit.Elts {
+			// Load the slice reference
+			c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, tempVarName, nil))
+
+			// Compile the index
+			c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, i, nil))
+
+			// Compile the element value
+			if err := c.compileExpr(elem); err != nil {
+				return err
+			}
+
+			// Set the element in the slice
+			// Stack should be: [..., slice, index, value]
+			c.emitInstruction(instruction.NewInstruction(instruction.OpSetIndex, nil, nil))
+		}
+
+		// Load the final slice onto the stack
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, tempVarName, nil))
+	} else {
+		// Handle struct literals like Person{name: "Alice"}
+		// Create a new struct with type information if available
+		var structType string
+		if lit.Type != nil {
+			// Try to extract type name from the composite literal type
+			structType = c.getTypeName(lit.Type)
+		}
+		c.emitInstruction(instruction.NewInstruction(instruction.OpNewStruct, structType, nil))
+
+		// Store the struct in a temporary variable so we can reference it multiple times
+		tempVarName := c.generateKey("composite_lit")
+		c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, tempVarName, nil))
+
+		// Compile each element and add it to the struct
+		for _, elem := range lit.Elts {
+			// Handle KeyValueExpr (for struct fields) or regular expressions (for slice elements)
+			switch e := elem.(type) {
+			case *ast.KeyValueExpr:
+				// This is a struct field assignment: key: value
+				// Load the struct reference
+				c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, tempVarName, nil))
+
+				// Compile the key (field name)
+				var fieldName string
+				if keyIdent, ok := e.Key.(*ast.Ident); ok {
+					fieldName = keyIdent.Name
+				} else {
+					return fmt.Errorf("unsupported key type in KeyValueExpr: %T", e.Key)
+				}
+
+				// Compile the value
+				if err := c.compileExpr(e.Value); err != nil {
+					return err
+				}
+
+				// Set the field in the struct
+				// Stack should be: [..., struct, value]
+				c.emitInstruction(instruction.NewInstruction(instruction.OpSetField, fieldName, nil))
+			default:
+				// For slice elements or other types, we would need different handling
+				// But for now, let's focus on struct support
+				return fmt.Errorf("unsupported composite literal element type: %T", elem)
+			}
+		}
+
+		// Load the final struct onto the stack
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, tempVarName, nil))
+	}
+
+	return nil
+}
+
+// compileIndexExpr compiles an index expression (e.g., array[index])
+func (c *Compiler) compileIndexExpr(expr *ast.IndexExpr) error {
+	// Compile the expression being indexed (e.g., array)
+	if err := c.compileExpr(expr.X); err != nil {
 		return err
 	}
 
-	// Handle different unary operators
-	switch expr.Op {
-	case token.AND: // & operator (address of)
-		// For now, we'll just leave the operand on the stack as-is
-		// In a more complete implementation, we would need to handle pointers properly
-		// For our simple case, we'll treat &Person{} as just Person{}
-		return nil
-	case token.SUB: // - operator (negation)
-		c.emitInstruction(vm.NewInstruction(vm.OpUnaryOp, vm.OpNeg, nil))
-	case token.NOT: // ! operator (logical not)
-		c.emitInstruction(vm.NewInstruction(vm.OpUnaryOp, vm.OpNot, nil))
-	default:
-		return fmt.Errorf("unsupported unary operator: %s", expr.Op)
+	// Compile the index expression (e.g., index)
+	if err := c.compileExpr(expr.Index); err != nil {
+		return err
 	}
+
+	// Emit the GET_INDEX instruction
+	c.emitInstruction(instruction.NewInstruction(instruction.OpGetIndex, nil, nil))
 
 	return nil
 }
@@ -1444,67 +977,64 @@ func (c *Compiler) compileBasicLit(lit *ast.BasicLit) error {
 		if err != nil {
 			return err
 		}
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, value, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, value, nil))
 	case token.FLOAT:
 		// Parse the float value
 		value, err := strconv.ParseFloat(lit.Value, 64)
 		if err != nil {
 			return err
 		}
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, value, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, value, nil))
 	case token.STRING:
 		// Remove quotes from string literal
 		value := lit.Value[1 : len(lit.Value)-1]
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, value, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLoadConst, value, nil))
 	default:
 		return fmt.Errorf("unsupported literal kind: %s", lit.Kind)
 	}
-
 	return nil
 }
 
 // compileBinaryExpr compiles a binary expression
 func (c *Compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
 	// Compile left operand
-	err := c.compileExpr(expr.X)
-	if err != nil {
+	if err := c.compileExpr(expr.X); err != nil {
 		return err
 	}
 
 	// Compile right operand
-	err = c.compileExpr(expr.Y)
-	if err != nil {
+	if err := c.compileExpr(expr.Y); err != nil {
 		return err
 	}
 
 	// Emit the appropriate binary operation
 	switch expr.Op {
 	case token.ADD:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpAdd, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpAdd, nil))
 	case token.SUB:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpSub, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpSub, nil))
 	case token.MUL:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpMul, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpMul, nil))
 	case token.QUO:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpDiv, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpDiv, nil))
 	case token.REM:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpMod, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpMod, nil))
 	case token.EQL:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpEqual, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpEqual, nil))
 	case token.NEQ:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpNotEqual, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpNotEqual, nil))
 	case token.LSS:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpLess, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpLess, nil))
 	case token.LEQ:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpLessEqual, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpLessEqual, nil))
 	case token.GTR:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpGreater, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpGreater, nil))
 	case token.GEQ:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpGreaterEqual, nil))
-	case token.LAND:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpAnd, nil))
-	case token.LOR:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpOr, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpGreaterEqual, nil))
+	case token.LAND: // Logical AND (&&)
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpAnd, nil))
+	case token.LOR: // Logical OR (||)
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpOr, nil))
 	default:
 		return fmt.Errorf("unsupported binary operator: %s", expr.Op)
 	}
@@ -1512,149 +1042,47 @@ func (c *Compiler) compileBinaryExpr(expr *ast.BinaryExpr) error {
 	return nil
 }
 
-// compileCallExpr compiles a function call expression
+// compileCallExpr compiles a function call expression with key-based calling
 func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
-	// Handle method calls (e.g., obj.Method())
-	if selExpr, ok := expr.Fun.(*ast.SelectorExpr); ok {
-		// Get the method name
-		methodName := selExpr.Sel.Name
-
-		// Check if this is a module function call (e.g., strings.HasPrefix)
-		// In this case, selExpr.X would be an identifier like "strings"
-		if ident, ok := selExpr.X.(*ast.Ident); ok {
-			// Check if this identifier is in our imports list
-			for _, importPath := range c.imports {
-				// Get the module name from the import path
-				parts := strings.Split(importPath, "/")
-				moduleName := parts[len(parts)-1]
-
-				// If the identifier matches the module name, this is a module function call
-				if ident.Name == moduleName {
-					// Create the full function name (e.g., "strings.HasPrefix")
-					fullFunctionName := moduleName + "." + methodName
-
-					// Compile all arguments
-					argCount := len(expr.Args)
-					for _, arg := range expr.Args {
-						err := c.compileExpr(arg)
-						if err != nil {
-							return err
-						}
-					}
-
-					// Emit a regular function call instruction for module functions
-					// Module functions are registered in the VM's function registry
-					c.emitInstruction(vm.NewInstruction(vm.OpCall, fullFunctionName, argCount))
-
-					return nil
-				}
+	// Handle different types of function calls
+	switch fun := expr.Fun.(type) {
+	case *ast.Ident:
+		// Regular function calls (e.g., add(1, 2))
+		// Compile all arguments
+		argCount := len(expr.Args)
+		for _, arg := range expr.Args {
+			if err := c.compileExpr(arg); err != nil {
+				return err
 			}
 		}
 
-		// Determine the type of the receiver for struct method calls
-		var typeName string
-		var varName string
-		if ident, ok := selExpr.X.(*ast.Ident); ok {
-			// Get the type from our variable type mapping
-			varName = ident.Name
-			typeName = c.variableTypes[varName]
-		} else if callExpr, ok := selExpr.X.(*ast.CallExpr); ok {
-			// This is a method chain, e.g., obj.Method1().Method2()
-			// We need to determine the return type of the previous method call
-			// Check if we have tracked the type of the previous expression
-			if trackedType, exists := c.expressionTypes[callExpr]; exists {
-				typeName = trackedType
-			} else {
-				// Try to infer the return type from the method signature
-				if prevSelExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
-					prevMethodName := prevSelExpr.Sel.Name
-					// Try to find a method that matches the name and get its return type
-					// We'll look for methods that return a pointer to a struct (for chaining)
-					for funcName := range c.functionMap {
-						if strings.HasSuffix(funcName, "."+prevMethodName) {
-							// Extract the type name from the function name
-							parts := strings.Split(funcName, ".")
-							if len(parts) == 2 {
-								// Check if this method returns a pointer to the same type (for chaining)
-								// This is a heuristic - in a real implementation we would have proper type information
-								typeName = parts[0]
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-
-		// Create unique method name
-		uniqueMethodName := methodName
-		if typeName != "" {
-			uniqueMethodName = typeName + "." + methodName
-		}
-
-		// Get function info to determine receiver type
-		funcInfo, exists := c.functionMap[uniqueMethodName]
-		isPointerReceiver := exists && funcInfo != nil && funcInfo.ReceiverType == "pointer"
-
-		// For method calls, we need to compile the receiver first
-		// This ensures the correct order when arguments are popped during function call
-		err := c.compileExpr(selExpr.X)
-		if err != nil {
+		// Emit the function call instruction with key-based calling
+		c.emitInstruction(instruction.NewInstruction(instruction.OpCall, fun.Name, argCount))
+	case *ast.SelectorExpr:
+		// Method calls (e.g., p.SetWidth(20)) or module calls (e.g., math.Max(1, 2))
+		// For unified handling, we'll compile the receiver and then use OpCall
+		// First, compile the receiver (e.g., p or math)
+		if err := c.compileExpr(fun.X); err != nil {
 			return err
 		}
 
 		// Compile all arguments
 		argCount := len(expr.Args)
 		for _, arg := range expr.Args {
-			err := c.compileExpr(arg)
-			if err != nil {
+			if err := c.compileExpr(arg); err != nil {
 				return err
 			}
 		}
 
-		// For method calls, we pass the receiver as the first argument
-		// The stack order should be: [receiver, arg1, ..., argN] so that when popped,
-		// we get [receiver, arg1, ..., argN]
-		c.emitInstruction(vm.NewInstruction(vm.OpCallMethod, uniqueMethodName, argCount+1)) // +1 for receiver
-
-		// For pointer receivers, we need to update the original variable with the modified struct
-		// For value receivers, the original variable should remain unchanged
-		if isPointerReceiver && varName != "" {
-			// If it's a pointer receiver, we need to store the modified struct back to the variable
-			c.emitInstruction(vm.NewInstruction(vm.OpStoreName, varName, nil))
-		}
-
-		// Track the type of this method call expression for potential method chaining
-		// If this method returns a pointer to a struct (for chaining), track that type
-		if funcInfo != nil && funcInfo.ReceiverType == "pointer" {
-			// Heuristic: assume pointer receiver methods return the same type for chaining
-			// Extract type name from the function name (e.g., "Calculator.Add" -> "Calculator")
-			parts := strings.Split(uniqueMethodName, ".")
-			if len(parts) >= 2 {
-				c.expressionTypes[expr] = parts[0]
-			}
-		}
-
-		return nil
-	}
-
-	// Handle regular function calls
-	ident, ok := expr.Fun.(*ast.Ident)
-	if !ok {
+		// For unified handling, we use the format "receiver.functionName"
+		// The receiver will be on the stack as the first argument
+		functionName := fun.Sel.Name
+		// Emit the function call instruction with the function name only
+		// The receiver is already on the stack as the first argument
+		c.emitInstruction(instruction.NewInstruction(instruction.OpCall, functionName, argCount+1))
+	default:
 		return fmt.Errorf("unsupported function call type: %T", expr.Fun)
 	}
-
-	// Compile all arguments
-	argCount := len(expr.Args)
-	for _, arg := range expr.Args {
-		err := c.compileExpr(arg)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Emit the regular function call instruction for external functions
-	c.emitInstruction(vm.NewInstruction(vm.OpCall, ident.Name, argCount))
 
 	return nil
 }
@@ -1662,313 +1090,262 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 // compileIdent compiles an identifier
 func (c *Compiler) compileIdent(ident *ast.Ident) error {
 	// Emit a load name instruction
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadName, ident.Name, nil))
-
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, ident.Name, nil))
 	return nil
 }
 
-// compileCompositeLit compiles a composite literal (e.g., struct literal, slice literal)
-func (c *Compiler) compileCompositeLit(lit *ast.CompositeLit) error {
-	// Check if this is a slice/array literal
-	if _, ok := lit.Type.(*ast.ArrayType); ok {
-		// This is a slice or array literal
-		// Compile all elements first
-		for _, elt := range lit.Elts {
-			err := c.compileExpr(elt)
-			if err != nil {
-				return err
-			}
-		}
-
-		// Emit instruction to create a new slice with the compiled elements
-		// The elements are on the stack, and we pass the count as an argument
-		c.emitInstruction(vm.NewInstruction(vm.OpNewSlice, len(lit.Elts), nil))
-
-		return nil
-	}
-
-	// Handle struct literals
-	// Get the type name if available
-	var typeName string
-	if ident, ok := lit.Type.(*ast.Ident); ok {
-		typeName = ident.Name
-	}
-
-	// Emit instruction to create a new struct
-	// Pass the type name as an argument
-	c.emitInstruction(vm.NewInstruction(vm.OpNewStruct, typeName, nil))
-
-	// Process each key-value pair in the composite literal
-	for _, elt := range lit.Elts {
-		switch kv := elt.(type) {
-		case *ast.KeyValueExpr:
-			// Get the key (field name) first
-			if keyIdent, ok := kv.Key.(*ast.Ident); ok {
-				// Push the field name
-				c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, keyIdent.Name, nil))
-			}
-
-			// Compile the value
-			err := c.compileExpr(kv.Value)
-			if err != nil {
-				return err
-			}
-
-			// Emit instruction to set the field
-			// Stack at this point: [struct, fieldName, value]
-			// OpSetStructField expects: [struct, fieldName, value]
-			// So the order is already correct, no need to rotate
-			c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
-		}
-	}
-
-	return nil
-}
-
-// compileSelectorExpr compiles a selector expression (e.g., obj.field)
+// compileSelectorExpr compiles a selector expression (e.g., p.age)
 func (c *Compiler) compileSelectorExpr(expr *ast.SelectorExpr) error {
-	// Compile the expression on the left side of the selector
-	err := c.compileExpr(expr.X)
-	if err != nil {
+	// For field access, we need to:
+	// 1. Compile the expression being selected (e.g., p)
+	// 2. Emit the GET_FIELD instruction with the field name as argument
+	// But according to the new architecture, we should emit OpLoadName with the qualified name
+
+	// Compile the expression being selected (e.g., p)
+	if err := c.compileExpr(expr.X); err != nil {
 		return err
 	}
 
-	// Get the field name
-	fieldName := expr.Sel.Name
-
-	// Push the field name onto the stack
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, fieldName, nil))
-
-	// Emit instruction to get the field
-	c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
+	// Emit the GET_FIELD instruction with the field name as argument
+	c.emitInstruction(instruction.NewInstruction(instruction.OpGetField, expr.Sel.Name, nil))
 
 	return nil
 }
 
-// compileIndexExpr compiles an index expression (e.g., array[index])
-func (c *Compiler) compileIndexExpr(expr *ast.IndexExpr) error {
-	// Compile the array/slice expression
-	err := c.compileExpr(expr.X)
-	if err != nil {
-		return err
-	}
-
-	// Compile the index expression
-	err = c.compileExpr(expr.Index)
-	if err != nil {
-		return err
-	}
-
-	// Emit instruction to get the element at the index
-	c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
-
-	return nil
+// generateKey generates a unique key for a code block
+func (c *Compiler) generateKey(prefix string) string {
+	c.keyCounter++
+	return fmt.Sprintf("%s.%s_%d", c.currentScopeKey, prefix, c.keyCounter)
 }
 
-// compileIncDecStmt compiles an increment/decrement statement
-func (c *Compiler) compileIncDecStmt(stmt *ast.IncDecStmt) error {
-	// Load the current value of the variable
-	switch x := stmt.X.(type) {
-	case *ast.Ident:
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadName, x.Name, nil))
-	case *ast.SelectorExpr:
-		// Handle field access (e.g., obj.field)
-		// Compile the object expression first
-		err := c.compileExpr(x.X)
-		if err != nil {
-			return err
-		}
+// emitInstruction adds an instruction to the current scope
+func (c *Compiler) emitInstruction(instr *instruction.Instruction) {
+	c.currentInstructions = append(c.currentInstructions, instr)
+}
 
-		// Push the field name as a constant
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, x.Sel.Name, nil))
+// transferInstructions transfers all compiled instructions from the compile context to the VM
+func (c *Compiler) transferInstructions() error {
+	// First, resolve label positions for goto instructions
+	c.resolveLabelPositions()
 
-		// Emit instruction to get the field
-		c.emitInstruction(vm.NewInstruction(vm.OpGetField, nil, nil))
-	case *ast.IndexExpr:
-		// Handle index access (e.g., array[index])
-		// Compile the array/slice expression first
-		err := c.compileExpr(x.X)
-		if err != nil {
-			return err
-		}
+	// Transfer instructions from the compile context
+	instructions := c.compileContext.GetAllInstructions()
 
-		// Compile the index expression
-		err = c.compileExpr(x.Index)
-		if err != nil {
-			return err
-		}
+	// Transfer each set of instructions with their keys
+	for key, instrs := range instructions {
+		fmt.Printf("Transferring instructions for key: %s, count: %d\n", key, len(instrs))
 
-		// Emit instruction to get the element at the index
-		c.emitInstruction(vm.NewInstruction(vm.OpGetIndex, nil, nil))
-	default:
-		return fmt.Errorf("unsupported increment/decrement target: %T", x)
-	}
-
-	// Load constant 1
-	c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, 1, nil))
-
-	// Emit the appropriate binary operation
-	switch stmt.Tok {
-	case token.INC:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpAdd, nil))
-	case token.DEC:
-		c.emitInstruction(vm.NewInstruction(vm.OpBinaryOp, vm.OpSub, nil))
-	default:
-		return fmt.Errorf("unsupported increment/decrement operator: %s", stmt.Tok)
-	}
-
-	// Store the result back to the variable
-	switch x := stmt.X.(type) {
-	case *ast.Ident:
-		c.emitInstruction(vm.NewInstruction(vm.OpStoreName, x.Name, nil))
-	case *ast.SelectorExpr:
-		// Handle field assignment (e.g., obj.field++)
-		// Compile the object expression first
-		err := c.compileExpr(x.X)
-		if err != nil {
-			return err
-		}
-
-		// Push the field name as a constant
-		c.emitInstruction(vm.NewInstruction(vm.OpLoadConst, x.Sel.Name, nil))
-
-		// The value to assign is already on the stack from the addition/subtraction operation
-		// Emit instruction to set the field
-		c.emitInstruction(vm.NewInstruction(vm.OpSetStructField, nil, nil))
-	case *ast.IndexExpr:
-		// Handle index assignment (e.g., array[index]++)
-		// Compile the array/slice expression first
-		err := c.compileExpr(x.X)
-		if err != nil {
-			return err
-		}
-
-		// Compile the index expression
-		err = c.compileExpr(x.Index)
-		if err != nil {
-			return err
-		}
-
-		// The value to assign is already on the stack from the addition/subtraction operation
-		// At this point, the stack should have: [result, array, index]
-		// But OpSetIndex expects: [array, index, result]
-		// So we need to rearrange the stack
-
-		// Emit instruction to rotate the top three elements
-		// This will change [result, array, index] to [array, index, result]
-		c.emitInstruction(vm.NewInstruction(vm.OpRotate, nil, nil))
-
-		// Emit instruction to set the element at the index
-		c.emitInstruction(vm.NewInstruction(vm.OpSetIndex, nil, nil))
-	default:
-		return fmt.Errorf("unsupported increment/decrement target: %T", x)
+		// Add instruction set with key to the VM
+		c.vm.AddInstructionSet(key, instrs)
 	}
 
 	return nil
 }
 
-// compileBranchStmt compiles a branch statement (break, continue)
+// resolveLabelPositions resolves label positions for goto instructions
+func (c *Compiler) resolveLabelPositions() {
+	// Get all instruction sets
+	allInstructions := c.compileContext.GetAllInstructions()
+
+	// Process each instruction set
+	for key, instructions := range allInstructions {
+		// Create a map of label names to their positions within this instruction set
+		labelMap := make(map[string]int)
+
+		// First pass: collect all label positions
+		for i, instr := range instructions {
+			if instr.Op == instruction.OpLabel {
+				if labelName, ok := instr.Arg.(string); ok {
+					labelMap[labelName] = i
+				}
+			}
+		}
+
+		// Second pass: resolve goto and jumpif instructions
+		for _, instr := range instructions {
+			if instr.Op == instruction.OpJump || instr.Op == instruction.OpJumpIf {
+				if labelName, ok := instr.Arg.(string); ok {
+					if targetPos, exists := labelMap[labelName]; exists {
+						// Update the instruction with the actual target position
+						instr.Arg = targetPos
+					} else {
+						// Label not found in current scope, check if it's a forward reference
+						// For now, we'll leave it as is and let the VM handle it
+						fmt.Printf("Warning: Label '%s' not found in scope '%s'\n", labelName, key)
+					}
+				}
+			}
+		}
+	}
+}
+
+// compileSwitchStmt compiles a switch statement using goto-based approach
+func (c *Compiler) compileSwitchStmt(stmt *ast.SwitchStmt) error {
+	// Generate a unique scope key for this switch statement
+	scopeKey := c.generateKey("switch")
+
+	// Emit instruction to enter the switch scope
+	c.emitInstruction(instruction.NewInstruction(instruction.OpEnterScopeWithKey, scopeKey, nil))
+
+	// Compile the switch tag (expression to switch on) and store it in a variable
+	var tagVarName string
+	if stmt.Tag != nil {
+		// Compile the tag expression
+		if err := c.compileExpr(stmt.Tag); err != nil {
+			return err
+		}
+
+		// Store the tag value in a temporary variable
+		tagVarName = c.generateKey("switch_tag")
+		c.emitInstruction(instruction.NewInstruction(instruction.OpCreateVar, tagVarName, nil))
+		c.emitInstruction(instruction.NewInstruction(instruction.OpStoreName, tagVarName, nil))
+	}
+
+	// Generate labels for cases
+	caseLabels := make([]string, len(stmt.Body.List))
+	defaultLabel := ""
+	endLabel := c.generateKey("end_switch")
+
+	// First pass: generate labels
+	for i, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok {
+			return fmt.Errorf("unexpected clause type in switch: %T", clause)
+		}
+
+		if len(caseClause.List) == 0 {
+			// Default case
+			defaultLabel = c.generateKey("default")
+			caseLabels[i] = defaultLabel
+		} else {
+			// Regular case
+			caseLabels[i] = c.generateKey("case")
+		}
+	}
+
+	// If no default case, use endLabel as default
+	if defaultLabel == "" {
+		defaultLabel = endLabel
+	}
+
+	// Generate condition checks and jumps
+	for i, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok {
+			return fmt.Errorf("unexpected clause type in switch: %T", clause)
+		}
+
+		if len(caseClause.List) == 0 {
+			// Default case - no condition check needed
+			continue
+		} else {
+			// Regular case with conditions
+			// For each expression in the case list, check if it matches the tag
+			for _, expr := range caseClause.List {
+				// Load the tag value
+				if tagVarName != "" {
+					c.emitInstruction(instruction.NewInstruction(instruction.OpLoadName, tagVarName, nil))
+				}
+
+				// Compile the case expression
+				if err := c.compileExpr(expr); err != nil {
+					return err
+				}
+
+				// Emit a binary equality operation
+				c.emitInstruction(instruction.NewInstruction(instruction.OpBinaryOp, instruction.OpEqual, nil))
+
+				// Emit a conditional jump to the case body if the condition is true
+				// Since JUMP_IF jumps when the condition is FALSE, we need to invert our logic.
+				// We want to jump to the case body when the condition is TRUE.
+				// So we use a trick: we put the jump to the case body AFTER the JUMP_IF instruction.
+				// If the condition is TRUE, JUMP_IF won't jump and we'll continue to the GOTO.
+				// If the condition is FALSE, JUMP_IF will jump to skip the GOTO.
+
+				// Create a label to skip the goto instruction
+				skipGotoLabel := c.generateKey("skip_goto")
+
+				// Jump to skipGotoLabel if condition is FALSE
+				c.emitInstruction(instruction.NewInstruction(instruction.OpJumpIf, skipGotoLabel, nil))
+
+				// If we reach here, condition was TRUE, so jump to case body
+				c.emitInstruction(instruction.NewInstruction(instruction.OpJump, caseLabels[i], nil))
+
+				// Label to skip the goto instruction
+				c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, skipGotoLabel, nil))
+			}
+		}
+	}
+
+	// Jump to default case if no conditions matched
+	c.emitInstruction(instruction.NewInstruction(instruction.OpJump, defaultLabel, nil))
+
+	// Process each case clause body
+	for i, clause := range stmt.Body.List {
+		caseClause, ok := clause.(*ast.CaseClause)
+		if !ok {
+			return fmt.Errorf("unexpected clause type in switch: %T", clause)
+		}
+
+		// Emit label for this case
+		c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, caseLabels[i], nil))
+
+		// Compile each statement in the case body
+		for _, caseStmt := range caseClause.Body {
+			if err := c.compileStmt(caseStmt); err != nil {
+				return err
+			}
+		}
+
+		// Jump to end of switch after executing the case body
+		c.emitInstruction(instruction.NewInstruction(instruction.OpJump, endLabel, nil))
+	}
+
+	// Emit label for end of switch (this is also the default label if no default case exists)
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, endLabel, nil))
+
+	// Emit instruction to exit the switch scope
+	c.emitInstruction(instruction.NewInstruction(instruction.OpExitScopeWithKey, scopeKey, nil))
+
+	return nil
+}
+
+// compileLabeledStmt compiles a labeled statement
+func (c *Compiler) compileLabeledStmt(stmt *ast.LabeledStmt) error {
+	// Record the position of this label
+	labelName := stmt.Label.Name
+	c.labelPositions[labelName] = len(c.currentInstructions)
+
+	// Emit a label instruction
+	c.emitInstruction(instruction.NewInstruction(instruction.OpLabel, labelName, nil))
+
+	// Compile the statement that follows the label
+	return c.compileStmt(stmt.Stmt)
+}
+
+// compileBranchStmt compiles a branch statement (goto, break, continue, fallthrough)
 func (c *Compiler) compileBranchStmt(stmt *ast.BranchStmt) error {
 	switch stmt.Tok {
+	case token.GOTO:
+		// Handle goto statement
+		if stmt.Label != nil {
+			// Emit a goto instruction with the label name
+			// The actual target position will be resolved later during linking
+			c.emitInstruction(instruction.NewInstruction(instruction.OpJump, stmt.Label.Name, nil))
+		} else {
+			return fmt.Errorf("goto statement must have a label")
+		}
 	case token.BREAK:
-		// Emit break instruction
-		c.emitInstruction(vm.NewInstruction(vm.OpBreak, nil, nil))
-		return nil
+		// Handle break statement
+		c.emitInstruction(instruction.NewInstruction(instruction.OpBreak, nil, nil))
 	case token.CONTINUE:
-		// For now, we don't support continue statements
-		return fmt.Errorf("continue statements are not yet supported")
+		// For now, we don't support continue, but we could add it later
+		return fmt.Errorf("continue statement not yet supported")
+	case token.FALLTHROUGH:
+		// For now, we don't support fallthrough, but we could add it later
+		return fmt.Errorf("fallthrough statement not yet supported")
 	default:
 		return fmt.Errorf("unsupported branch statement: %s", stmt.Tok)
 	}
-}
-
-// emitInstruction adds an instruction to the VM and updates the IP
-func (c *Compiler) emitInstruction(instr *vm.Instruction) {
-	c.vm.AddInstruction(instr)
-	c.ip++
-}
-
-// GetImports returns the list of imported modules
-func (c *Compiler) GetImports() []string {
-	return c.imports
-}
-
-// createFunctionInfo creates function info for a function declaration
-func (c *Compiler) createFunctionInfo(fn *ast.FuncDecl) error {
-	// Get function name
-	funcName := fn.Name.Name
-
-	// Check if this is a method (has receiver)
-	var receiverTypeName string
-	var receiverType string // "value" or "pointer"
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		// This is a method
-		// Get receiver type name to create a unique method name
-		if len(fn.Recv.List) > 0 {
-			receiver := fn.Recv.List[0]
-			// Extract type name from receiver
-			switch t := receiver.Type.(type) {
-			case *ast.Ident:
-				receiverTypeName = t.Name
-				receiverType = "value"
-			case *ast.StarExpr:
-				if ident, ok := t.X.(*ast.Ident); ok {
-					receiverTypeName = ident.Name
-				}
-				receiverType = "pointer"
-			}
-		}
-
-		// Create unique method name
-		if receiverTypeName != "" {
-			funcName = receiverTypeName + "." + fn.Name.Name
-		}
-
-		fmt.Printf("Creating method info for: %s (unique name: %s, receiver type: %s)\n", fn.Name.Name, funcName, receiverType)
-	} else {
-		fmt.Printf("Creating function info for: %s\n", funcName)
-	}
-
-	// Create function info
-	funcInfo := &FunctionInfo{
-		Name:         funcName,
-		ParamNames:   make([]string, 0),
-		ReceiverType: receiverType,
-	}
-
-	// Handle receiver parameter for methods
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		receiver := fn.Recv.List[0]
-		if len(receiver.Names) > 0 {
-			// Add receiver name to parameter names
-			funcInfo.ParamNames = append(funcInfo.ParamNames, receiver.Names[0].Name)
-			funcInfo.ParamCount++
-		}
-	}
-
-	// Count parameters and collect parameter names
-	if fn.Type.Params != nil {
-		// Count all parameter names (handling multiple names per field)
-		for _, param := range fn.Type.Params.List {
-			for _, name := range param.Names {
-				funcInfo.ParamCount++
-				funcInfo.ParamNames = append(funcInfo.ParamNames, name.Name)
-			}
-		}
-	}
-
-	// Create ScriptFunction that will be registered at runtime
-	funcInfo.ScriptFunction = &vm.ScriptFunction{
-		Name:         funcName,
-		ParamCount:   funcInfo.ParamCount,
-		ParamNames:   funcInfo.ParamNames,
-		ReceiverType: receiverType,
-	}
-
-	fmt.Printf("Created function info: %s with %d params, receiver type: %s\n", funcName, funcInfo.ParamCount, receiverType)
-
-	// Store function info
-	c.functionMap[funcName] = funcInfo
-
 	return nil
 }

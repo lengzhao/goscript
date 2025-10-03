@@ -1,50 +1,54 @@
-// Package main provides an example of using control flow statements in GoScript
 package main
 
-import (
-	"fmt"
-
-	"github.com/lengzhao/goscript"
-)
+import "fmt"
 
 func main() {
-	// Create a script that uses control flow statements
-	source := `
-package main
+	// Test various control flow constructs
 
-func main() {
-	// Use if-else statement
+	// Test if statement
 	x := 10
 	if x > 5 {
-		x = x * 2
+		fmt.Println("x is greater than 5")
 	} else {
-		x = x / 2
+		fmt.Println("x is not greater than 5")
 	}
 
-	// Use for loop
+	// Test if without else
+	if x < 20 {
+		fmt.Println("x is less than 20")
+	}
+
+	// Test switch statement
+	switch x {
+	case 5:
+		fmt.Println("x is 5")
+	case 10:
+		fmt.Println("x is 10")
+	default:
+		fmt.Println("x is something else")
+	}
+
+	// Test for loop
 	sum := 0
-	for i := 1; i <= 3; i++ {  // Reduced iterations
+	for i := 1; i <= 3; i++ {
 		sum += i
 	}
+	fmt.Printf("Sum from 1 to 3 is %d\n", sum)
 
-	// Use while-like loop
-	count := 0
-	for count < 2 {  // Reduced iterations
-		count++
+	// Test range loop
+	numbers := []int{1, 2, 3}
+	rangeSum := 0
+	for _, num := range numbers {
+		rangeSum += num
 	}
+	fmt.Printf("Sum of numbers array is %d\n", rangeSum)
 
-	return x + sum + count
-}
-`
+	// Test goto
+	i := 0
+	goto skip
+	i = 100 // This should be skipped
+skip:
+	fmt.Printf("i is %d\n", i)
 
-	script := goscript.NewScript([]byte(source))
-
-	// Execute the script
-	result, err := script.Run()
-	if err != nil {
-		fmt.Printf("Execution error: %v\n", err)
-		return
-	}
-
-	fmt.Printf("Script result: %v\n", result)
+	fmt.Println("All control flow tests completed!")
 }

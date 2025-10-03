@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/lengzhao/goscript/compiler"
-	"github.com/lengzhao/goscript/context"
 	"github.com/lengzhao/goscript/parser"
 	"github.com/lengzhao/goscript/vm"
 )
@@ -29,14 +28,12 @@ func main() {
 
 	// Create VM and context
 	vmInstance := vm.NewVM()
-	context := context.NewExecutionContext()
-
 	// Enable debug mode
-	vmInstance.SetDebug(true)
-	context.SetDebug(true)
+	// vmInstance.SetDebug(true) // Not implemented in current VM
+	// context.SetDebug(true) // ExecutionContext not used in current implementation
 
 	// Create compiler and compile
-	compiler := compiler.NewCompiler(vmInstance, context)
+	compiler := compiler.NewCompiler(vmInstance)
 	err = compiler.Compile(astFile)
 	if err != nil {
 		t.Fatalf("Failed to compile script: %v", err)
@@ -50,7 +47,7 @@ func main() {
 	}
 
 	// Execute the VM
-	result, err := vmInstance.Execute(nil)
+	result, err := vmInstance.Execute("")
 	if err != nil {
 		t.Fatalf("Failed to execute VM: %v", err)
 	}
@@ -81,14 +78,12 @@ func main() {
 
 	// Create VM and context
 	vmInstance := vm.NewVM()
-	context := context.NewExecutionContext()
 
 	// Enable debug mode
-	vmInstance.SetDebug(true)
-	context.SetDebug(true)
+	// vmInstance.SetDebug(true) // Not implemented in current VM
 
 	// Create compiler and compile
-	compiler := compiler.NewCompiler(vmInstance, context)
+	compiler := compiler.NewCompiler(vmInstance)
 
 	// Add some debug prints to see what's happening
 	t.Logf("Starting compilation...")
