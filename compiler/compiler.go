@@ -1087,13 +1087,6 @@ func (c *Compiler) compileCallExpr(expr *ast.CallExpr) error {
 	return nil
 }
 
-// isModuleName checks if a name is a registered module name
-func (c *Compiler) isModuleName(name string) bool {
-	// Check against imported modules
-	_, exists := c.importedModules[name]
-	return exists
-}
-
 // compileIdent compiles an identifier
 func (c *Compiler) compileIdent(ident *ast.Ident) error {
 	// Emit a load name instruction
